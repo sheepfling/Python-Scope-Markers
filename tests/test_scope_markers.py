@@ -238,24 +238,37 @@ def test_nested_match_case_header_after_comment_uses_inner_indentation() -> None
 
 def test_large_match_table_uses_stable_case_header_lookup() -> None:
     source = "match value:\n" + "".join(
-        f"    case {index}:\n        pass\n" for index in range(500)
+        f"    case {index}:\n        pass\n" for index in range(1000)
     )
 
     formatted = scope_markers.format_source(source)
 
-    assert formatted.count("####") == 501
+    assert formatted.count("####") == 1001
     assert scope_markers.format_source(formatted) == formatted
 ####
 
 
 def test_long_elif_chain_has_one_boundary_and_is_idempotent() -> None:
     source = "if value == 0:\n    pass\n" + "".join(
-        f"elif value == {index}:\n    pass\n" for index in range(1, 300)
+        f"elif value == {index}:\n    pass\n" for index in range(1, 1000)
     ) + "else:\n    pass\n"
 
     formatted = scope_markers.format_source(source)
 
     assert formatted.count("####") == 1
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+def test_many_independent_compound_statements_are_stable() -> None:
+    source = "".join(
+        f"def function_{index}() -> int:\n    return {index}\n"
+        for index in range(1000)
+    )
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.count("####") == 1000
     assert scope_markers.format_source(formatted) == formatted
 ####
 
@@ -269,6 +282,24 @@ def test_deeply_nested_if_scopes_are_stable() -> None:
     formatted = scope_markers.format_source(source)
 
     assert formatted.count("####") == depth
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+def test_deeply_nested_classes_and_functions_are_stable() -> None:
+    # Alternate class and function suites while staying below CPython's
+    # indentation-depth limit.
+    pairs = 40
+    source = "".join(
+        f"{'    ' * (2 * level)}class Level{level}:\n"
+        f"{'    ' * (2 * level + 1)}def function_{level}():\n"
+        for level in range(pairs)
+    )
+    source += f"{'    ' * (2 * pairs)}pass\n"
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.count("####") == pairs * 2
     assert scope_markers.format_source(formatted) == formatted
 ####
 
