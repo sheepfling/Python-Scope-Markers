@@ -13,11 +13,10 @@ import pytest
 
 import scope_markers as package
 from scope_markers import api, cli
-from scripts import ci
+from scripts import check_black, ci
 
 # Literal ``####`` values intentionally verify the formatter's defining output.
 scope_markers = api
-
 
 def test_nested_scopes_are_closed_inside_out() -> None:
     source = (
@@ -135,6 +134,27 @@ def test_match_cases_and_match_statement_are_closed_separately() -> None:
         "####\n"
     )
     assert scope_markers.format_source(formatted) == formatted
+####
+
+
+def test_multiline_match_case_marker_uses_case_header_indentation() -> None:
+    source = (
+        "match value:\n"
+        "    case (\n"
+        "        1\n"
+        "    ):\n"
+        "        pass\n"
+    )
+
+    assert scope_markers.format_source(source) == (
+        "match value:\n"
+        "    case (\n"
+        "        1\n"
+        "    ):\n"
+        "        pass\n"
+        "    ####\n"
+        "####\n"
+    )
 ####
 
 
@@ -282,6 +302,19 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
 ####
 
 
+def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
+    assert ci.ci_commands("python311", fix=True) == (
+        ("python311", "-m", "pytest", "-q"),
+        ("python311", "-m", "ruff", "check", "--fix", "."),
+        ("python311", "-m", "flake8", "src", "scripts", "tests"),
+        ("python311", "scripts/check_black.py"),
+        ("python311", "-m", "pyright"),
+        ("python311", "-m", "build", "--wheel"),
+        ("scope-markers", "--fix", "."),
+    )
+####
+
+
 def test_ci_main_runs_all_commands_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
     commands = (("first",), ("second",), ("third",))
     called: list[tuple[str, ...]] = []
@@ -290,6 +323,34 @@ def test_ci_main_runs_all_commands_in_order(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert ci.main() == 0
     assert called == list(commands)
+####
+
+
+def test_ci_main_forwards_fix_option(monkeypatch: pytest.MonkeyPatch) -> None:
+    received: list[bool] = []
+    monkeypatch.setattr(
+        ci,
+        "ci_commands",
+        lambda fix=False: received.append(fix) or (),
+    )
+    monkeypatch.setattr(ci, "run_command", lambda command: 0)
+
+    assert ci.main(["--fix"]) == 0
+    assert received == [True]
+####
+
+
+def test_ci_run_command_reports_startup_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_to_start(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("command not found")
+
+    monkeypatch.setattr(ci.subprocess, "run", fail_to_start)
+
+    assert ci.run_command(("missing-command",)) == 1
+    assert "CI command could not start: missing-command" in capsys.readouterr().err
 ####
 
 
@@ -302,11 +363,54 @@ def test_ci_main_stops_and_returns_the_first_failure(monkeypatch: pytest.MonkeyP
         return 7 if command == commands[1] else 0
     ####
 
+
     monkeypatch.setattr(ci, "ci_commands", lambda: commands)
     monkeypatch.setattr(ci, "run_command", run)
 
     assert ci.main() == 7
     assert called == [commands[0], commands[1]]
+####
+
+
+def test_flake8_configuration_allows_marker_and_black_compatible_syntax(
+    tmp_dir: Path,
+) -> None:
+    source = (
+        "def first(values: list[int]) -> list[int]:\n"
+        "    return values[1 : 2]\n"
+        "####\n"
+        "def second() -> None:\n"
+        "    pass\n"
+    )
+    path = tmp_dir / "marked.py"
+    path.write_text(source, encoding="utf-8")
+    command = [sys.executable, "-m", "flake8", str(path)]
+    project_root = Path(__file__).resolve().parents[1]
+
+    configured = subprocess.run(
+        command,
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    isolated = subprocess.run(
+        [*command[:3], "--isolated", *command[3:]],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert configured.returncode == 0, configured.stdout + configured.stderr
+    assert isolated.returncode != 0
+    assert "E203" in isolated.stdout or "E203" in isolated.stderr
+    assert "E302" in isolated.stdout or "E302" in isolated.stderr
+####
+
+
+def test_black_compatibility_check_passes() -> None:
+    assert check_black.main() == 0
 ####
 
 
@@ -649,6 +753,29 @@ def test_mixed_newlines_use_the_local_preceding_line_ending() -> None:
 ####
 
 
+def test_large_source_with_many_compound_statements_is_stable() -> None:
+    source = "".join(
+        f"def function_{index}():\n    pass\n" for index in range(1_000)
+    )
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.count("####") == 1_000
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+def test_extremely_long_physical_line_is_preserved() -> None:
+    value = "x" * 100_000
+    source = f"value = '{value}'\ndef example():\n    pass\n"
+
+    formatted = scope_markers.format_source(source)
+
+    assert f"value = '{value}'\n" in formatted
+    assert formatted.endswith("    pass\n####\n")
+####
+
+
 def test_non_utf8_source_encoding_and_cookie_are_preserved(tmp_dir: Path) -> None:
     path = tmp_dir / "latin1.py"
     path.write_bytes(
@@ -661,6 +788,21 @@ def test_non_utf8_source_encoding_and_cookie_are_preserved(tmp_dir: Path) -> Non
     assert scope_markers.process_file(path, fix=True) == (True, None)
     assert b"caf\xe9" in path.read_bytes()
     assert path.read_bytes().startswith(b"# -*- coding: latin-1 -*-")
+####
+
+
+def test_cp1252_source_encoding_is_supported(tmp_dir: Path) -> None:
+    path = tmp_dir / "cp1252.py"
+    path.write_bytes(
+        b"# coding: cp1252\n"
+        b"LABEL = '\x80'\n"
+        b"def example() -> None:\n"
+        b"    pass\n"
+    )
+
+    assert scope_markers.process_file(path, fix=True) == (True, None)
+    assert b"LABEL = '\x80'" in path.read_bytes()
+    assert path.read_bytes().endswith(b"    pass\n####\n")
 ####
 
 
@@ -757,6 +899,24 @@ def test_discovery_prunes_generated_directories_recursively(tmp_dir: Path) -> No
     files, errors = scope_markers.discover_python_files([tmp_dir])
 
     assert files == [source]
+    assert errors == []
+####
+
+
+def test_discovery_skips_an_explicit_symlinked_directory_root(tmp_dir: Path) -> None:
+    target = tmp_dir / "target"
+    target.mkdir()
+    (target / "module.py").write_text("pass\n", encoding="utf-8")
+    link = tmp_dir / "linked-root"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation is not permitted")
+    ####
+
+    files, errors = scope_markers.discover_python_files([link])
+
+    assert files == []
     assert errors == []
 ####
 
@@ -974,6 +1134,7 @@ def test_programmatic_api_exposes_stable_formatter_functions() -> None:
     assert api.format_source("def example():\n    pass\n").endswith("####\n")
     assert api.process_file is scope_markers.process_file
     assert api.discover_python_files is scope_markers.discover_python_files
+    assert issubclass(api.ScopeMarkersError, ValueError)
 ####
 
 
@@ -981,6 +1142,7 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_dir: Path) -> None:
     assert api.__all__ == (
         "FileInspection",
         "ScopeBoundary",
+        "ScopeMarkersError",
         "__version__",
         "discover_python_files",
         "format_source",
@@ -1141,15 +1303,16 @@ def test_cli_help_option_lists_supported_options(
     output = capsys.readouterr().out
     assert exception.value.code == 0
     for option in (
-        "--fix",
-        "--diff",
-        "--mark-stubs",
-        "--quiet",
-        "--verbose",
-        "--no-default-excludes",
-        "--include",
-        "--exclude",
-        "--version",
+            "--fix",
+            "--diff",
+            "--mark-stubs",
+            "--quiet",
+            "--verbose",
+            "--fail-fast",
+            "--no-default-excludes",
+            "--include",
+            "--exclude",
+            "--version",
     ):
         assert option in output
     ####
@@ -1194,6 +1357,52 @@ def test_cli_verbose_reports_status_without_polluting_diff(
 
     assert cli.main(["--fix", "--verbose", str(path)]) == 0
     assert f"fixed: {path}" in capsys.readouterr().out
+####
+
+
+def test_cli_fail_fast_stops_after_the_first_changed_file(tmp_dir: Path) -> None:
+    first = tmp_dir / "a.py"
+    second = tmp_dir / "b.py"
+    for path in (first, second):
+        path.write_text("def example():\n    pass\n", encoding="utf-8")
+    ####
+
+    assert cli.main(["--fail-fast", "--fix", "--quiet", str(tmp_dir)]) == 0
+    assert first.read_text(encoding="utf-8").endswith("####\n")
+    assert not second.read_text(encoding="utf-8").endswith("####\n")
+####
+
+
+def test_cli_fail_fast_check_reports_only_the_first_change(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    first = tmp_dir / "a.py"
+    second = tmp_dir / "b.py"
+    for path in (first, second):
+        path.write_text("def example():\n    pass\n", encoding="utf-8")
+    ####
+
+    assert cli.main(["--fail-fast", "--verbose", str(tmp_dir)]) == 1
+    output = capsys.readouterr().out
+
+    assert f"needs markers: {first}" in output
+    assert f"needs markers: {second}" not in output
+####
+
+
+def test_cli_fail_fast_stops_after_the_first_processing_error(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    broken = tmp_dir / "a_broken.py"
+    valid = tmp_dir / "b_valid.py"
+    broken.write_text("def broken(:\n", encoding="utf-8")
+    valid.write_text("def valid():\n    pass\n", encoding="utf-8")
+
+    assert cli.main(["--fail-fast", "--verbose", str(tmp_dir)]) == 2
+    captured = capsys.readouterr()
+
+    assert str(broken) in captured.err
+    assert str(valid) not in captured.out
 ####
 
 

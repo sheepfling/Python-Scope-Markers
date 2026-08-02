@@ -10,6 +10,7 @@ import sys
 import tempfile
 import tokenize
 from collections.abc import Iterable, Mapping, MutableSequence, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from importlib.metadata import PackageNotFoundError
@@ -23,6 +24,12 @@ try:
 except PackageNotFoundError:
     __version__ = "0+unknown"
 ####
+
+
+class ScopeMarkersError(ValueError):
+    """Raised when source cannot be formatted under scope-marker rules."""
+####
+
 
 MARKER: Final = "####"
 MARKER_STYLES: Final = ("##", "####")
@@ -68,7 +75,6 @@ COMPOUND_STATEMENTS: Final = (
     getattr(ast, "TryStar", ast.Try),
     ast.Match,
 )
-
 
 @dataclass(frozen=True, slots=True)
 class ScopeBoundary:
@@ -226,7 +232,7 @@ def _detect_marker_style(source: str) -> str:
     styles = {marker for marker in MARKER_STYLES if _standalone_marker_lines(source, marker)}
     if len(styles) > 1:
         found = ", ".join(sorted(styles))
-        raise ValueError(f"conflicting standalone marker styles: {found}")
+        raise ScopeMarkersError(f"conflicting standalone marker styles: {found}")
     ####
     return next(iter(styles), MARKER)
 ####
@@ -299,7 +305,7 @@ def _compound_nodes(tree: ast.AST, *, mark_stubs: bool) -> list[ast.stmt]:
 
 def _insertion_index(lines: Sequence[str], node: ast.stmt, indentation_width: int) -> int:
     if node.end_lineno is None:
-        raise ValueError(
+        raise ScopeMarkersError(
             f"{type(node).__name__} at line {node.lineno} has no end location"
         )
     ####
@@ -327,10 +333,11 @@ def _match_case_boundaries(tree: ast.AST, lines: Sequence[str]) -> list[ScopeBou
             if not case.body:
                 continue
             ####
-            line_number = getattr(case.pattern, "lineno", None)
-            if not isinstance(line_number, int) or not 1 <= line_number <= len(lines):
-                raise ValueError("match case has an invalid source location")
+            pattern_line = getattr(case.pattern, "lineno", None)
+            if not isinstance(pattern_line, int) or not 1 <= pattern_line <= len(lines):
+                raise ScopeMarkersError("match case has an invalid source location")
             ####
+            line_number = _match_case_line_number(lines, pattern_line)
             indentation = _indentation_prefix(lines[line_number - 1])
             width = _indentation_width(indentation)
             boundaries.append(
@@ -347,6 +354,17 @@ def _match_case_boundaries(tree: ast.AST, lines: Sequence[str]) -> list[ScopeBou
 ####
 
 
+def _match_case_line_number(lines: Sequence[str], pattern_line: int) -> int:
+    for line_number in range(pattern_line, 0, -1):
+        text = _line_body(lines[line_number - 1]).lstrip(" \t\f")
+        if text == "case" or text.startswith("case ") or text.startswith("case("):
+            return line_number
+        ####
+    ####
+    raise ScopeMarkersError("match case has no case header")
+####
+
+
 def _scope_boundaries(
         tree: ast.AST,
         lines: Sequence[str],
@@ -356,7 +374,7 @@ def _scope_boundaries(
     boundaries: list[ScopeBoundary] = []
     for node in _compound_nodes(tree, mark_stubs=mark_stubs):
         if not 1 <= node.lineno <= len(lines):
-            raise ValueError("compound statement has an invalid source location")
+            raise ScopeMarkersError("compound statement has an invalid source location")
         ####
         indentation = _indentation_prefix(lines[node.lineno - 1])
         width = _indentation_width(indentation)
@@ -411,7 +429,7 @@ def format_source(
     formatted = "".join(lines)
     formatted_tree = ast.parse(formatted, filename=filename)
     if _ast_shape(formatted_tree) != _ast_shape(tree):
-        raise ValueError("scope-marker formatting changed the Python AST")
+        raise ScopeMarkersError("scope-marker formatting changed the Python AST")
     ####
     return formatted
 ####
@@ -454,8 +472,8 @@ def _should_prune_directory(
         use_default_excludes: bool,
 ) -> bool:
     return (
-        (use_default_excludes and _is_skipped_directory(name))
-        or _is_excluded_path(path, root, patterns)
+            (use_default_excludes and _is_skipped_directory(name))
+            or _is_excluded_path(path, root, patterns)
     )
 ####
 
@@ -486,6 +504,7 @@ def _walk_python_files(
     def on_error(error: OSError) -> None:
         errors.append(f"{root}: {error}")
     ####
+
 
     for directory, names, filenames in os.walk(root, followlinks=False, onerror=on_error):
         current = Path(directory)
@@ -534,6 +553,9 @@ def discover_python_files(
                 else:
                     files.add(path)
                 ####
+                continue
+            ####
+            if path.is_symlink() and path.is_dir():
                 continue
             ####
             if path.is_dir():
@@ -603,9 +625,10 @@ def _write_atomic(path: Path, data: bytes) -> None:
         ####
         os.chmod(temporary, mode)
         os.replace(temporary, target)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+    finally:
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+        ####
     ####
 ####
 
@@ -643,7 +666,13 @@ def process_file(
         if inspection.changed and fix:
             _write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####
-    except (OSError, SyntaxError, UnicodeError, tokenize.TokenError, ValueError) as error:
+    except (
+            OSError,
+            SyntaxError,
+            UnicodeError,
+            tokenize.TokenError,
+            ScopeMarkersError,
+    ) as error:
         return False, _error_message(path, error)
     ####
     return inspection.changed, None

@@ -1,8 +1,17 @@
-"""Stable programmatic API for scope-marker formatting."""
+"""Stable programmatic API for scope-marker formatting.
+
+This module is the supported import boundary for library users. The
+implementation remains in a private module so formatting internals can evolve
+without requiring callers to import private names directly. Use
+``format_source`` for in-memory text, ``inspect_file`` for read-only file
+inspection, ``process_file`` for checking or rewriting one file, and
+``discover_python_files``/``python_files`` for discovery.
+"""
 
 from ._implementation import (
     FileInspection,
     ScopeBoundary,
+    ScopeMarkersError,
     __version__,
     discover_python_files,
     format_source,
@@ -14,6 +23,7 @@ from ._implementation import (
 __all__ = (
     "FileInspection",
     "ScopeBoundary",
+    "ScopeMarkersError",
     "__version__",
     "discover_python_files",
     "format_source",

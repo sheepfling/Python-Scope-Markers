@@ -68,11 +68,16 @@ scope-markers --diff src tests          # check and print a patch
 scope-markers --fix src tests           # rewrite files
 scope-markers --mark-stubs --fix src    # also mark stub-only functions
 scope-markers --verbose src tests       # report every file's status
+scope-markers --fail-fast .             # stop at the first needed fix/error
 ```
 
 `--quiet` and `--verbose` are mutually exclusive. In `--diff --verbose` mode,
 the patch remains clean on standard output and per-file status is reported on
 standard error.
+
+The default check scans every discovered file so CI can report all required
+changes. Use `--fail-fast` for a quick local check that stops after the first
+changed file or processing error.
 
 Add repeatable glob exclusions for project-specific generated or vendor trees:
 
@@ -266,8 +271,13 @@ pipx install .
 scope-markers --fix src tests
 ```
 
-For a one-off local checkout, the command can also be run without installing a
-persistent application:
+These commands require `uv` or `pipx` to be installed and available on `PATH`.
+If installation reports a missing command, install the corresponding tool first
+or use `python -m pip install -e .` inside a virtual environment.
+
+For a one-off local checkout, use `uvx` or `pipx run` when you want an isolated
+temporary invocation without installing a persistent application. Both commands
+resolve the package from the current checkout:
 
 ```bash
 uvx --from . scope-markers --fix src tests
@@ -340,12 +350,21 @@ Black is intentionally not run as a post-marker `--check`: Black and Ruff both
 normalize the whitespace and multiline strings around the required `####`
 markers. Flake8 is safe to run after markers because its project configuration
 matches the repository's line length and ignores the formatter-incompatible
-`E203` rule.
+`E203` rule. It also ignores `E302` and `E303`, which otherwise treat the
+required standalone `####` marker comments as function or class boundaries.
 
 The complete local/CI check sequence is also available as one command:
 
 ```bash
 python scripts/ci.py
+```
+
+For a local cleanup pass, add `--fix`. This enables Ruff's safe fixes and
+allows `scope-markers` to update the source files, then runs the remaining
+checks against the result:
+
+```bash
+python scripts/ci.py --fix
 ```
 
 GitHub Actions runs that sequence on Python 3.11, 3.12, 3.13, and 3.14.

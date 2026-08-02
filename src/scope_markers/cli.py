@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ._implementation import (
+    ScopeMarkersError,
     format_error,
     physical_lines,
     write_atomic,
@@ -105,6 +106,11 @@ def _build_parser() -> argparse.ArgumentParser:
     output.add_argument("--quiet", action="store_true", help="suppress status output")
     output.add_argument("--verbose", action="store_true", help="report each processed file")
     parser.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="stop after the first changed file or processing error",
+    )
+    parser.add_argument(
         "--no-default-excludes",
         action="store_true",
         help="also scan normally skipped directories such as .git and .venv",
@@ -137,6 +143,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mark_stubs = bool(args.mark_stubs)
     quiet = bool(args.quiet)
     verbose = bool(args.verbose)
+    fail_fast = bool(args.fail_fast)
     include_patterns = tuple(args.include)
     exclude_patterns = tuple(args.exclude)
     use_default_excludes = not bool(args.no_default_excludes)
@@ -148,7 +155,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         use_default_excludes=use_default_excludes,
     )
     changed: list[Path] = []
+    processed_files = 0
     for path in files:
+        processed_files += 1
         try:
             inspection = inspect_file(path, mark_stubs=mark_stubs)
             if not inspection.changed:
@@ -171,8 +180,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif verbose or not quiet:
                 print(f"needs markers: {path}")
             ####
-        except (OSError, SyntaxError, UnicodeError, tokenize.TokenError, ValueError) as error:
+            if fail_fast:
+                break
+            ####
+        except (
+                OSError,
+                SyntaxError,
+                UnicodeError,
+                tokenize.TokenError,
+                ScopeMarkersError,
+        ) as error:
             errors.append(format_error(path, error))
+            if fail_fast:
+                break
+            ####
         ####
     ####
 
@@ -185,7 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ####
     if not quiet:
         action = "fixed" if fix else "clean"
-        print(f"scope markers {action} ({len(files)} files)")
+        count = processed_files if fail_fast else len(files)
+        print(f"scope markers {action} ({count} files)")
     ####
     return 0
 ####

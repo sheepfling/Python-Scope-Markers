@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -10,30 +11,57 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def ci_commands(python: str = sys.executable) -> tuple[tuple[str, ...], ...]:
+def ci_commands(
+    python: str = sys.executable,
+    *,
+    fix: bool = False,
+) -> tuple[tuple[str, ...], ...]:
     """Return the ordered, platform-independent commands used by CI."""
+    ruff = (python, "-m", "ruff", "check")
+    if fix:
+        ruff += ("--fix",)
+    ####
+    ruff += (".",)
+    scope_markers = ("scope-markers",)
+    if fix:
+        scope_markers += ("--fix",)
+    ####
+    scope_markers += (".",)
     return (
         (python, "-m", "pytest", "-q"),
-        (python, "-m", "ruff", "check", "."),
+        ruff,
         (python, "-m", "flake8", "src", "scripts", "tests"),
         (python, "scripts/check_black.py"),
         (python, "-m", "pyright"),
         (python, "-m", "build", "--wheel"),
-        ("scope-markers", "."),
+        scope_markers,
     )
 ####
 
 
 def run_command(command: Sequence[str]) -> int:
     """Run one CI command from the repository root and return its exit code."""
-    completed = subprocess.run(command, cwd=ROOT, check=False)
+    try:
+        completed = subprocess.run(command, cwd=ROOT, check=False)
+    except OSError as error:
+        print(f"CI command could not start: {' '.join(command)}: {error}", file=sys.stderr)
+        return 1
+    ####
     return completed.returncode
 ####
 
 
-def main() -> int:
+def main(argv: Sequence[str] = ()) -> int:
     """Run each CI command in order, stopping at the first failure."""
-    for command in ci_commands():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="allow Ruff and scope-markers to rewrite files during validation",
+    )
+    args = parser.parse_args(argv)
+    commands = ci_commands(fix=True) if args.fix else ci_commands()
+    for command in commands:
         print(f"$ {' '.join(command)}")
         return_code = run_command(command)
         if return_code:
@@ -45,5 +73,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
 ####

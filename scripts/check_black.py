@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOTS = (ROOT / "src", ROOT / "scripts", ROOT / "tests")
 MARKERS = {"##", "####"}
 
-
 def _without_standalone_markers(source: str) -> str:
     lines = source.splitlines(keepends=True)
     marker_rows: set[int] = set()
