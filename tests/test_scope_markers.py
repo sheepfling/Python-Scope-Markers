@@ -125,6 +125,92 @@ def test_indent_width_converts_between_two_and_four_spaces(
 ####
 
 
+@pytest.mark.parametrize("target_width", (2, 4))
+def test_indent_width_normalizes_an_adversarial_valid_mixed_indentation_file(
+        target_width: int,
+) -> None:
+    source = (
+        "if outer:\n"
+        "\t# The chain intentionally mixes tab, two-space, and four-space levels.\n"
+        "\tif first:\n"
+        "\t  pass\n"
+        "\telif second:\n"
+        "\t    pass\n"
+        "\telse:\n"
+        "\t\tpass\n"
+    )
+    indent = " " * target_width
+
+    formatted = scope_markers.format_source(source, indent_width=target_width)
+
+    assert formatted == (
+        "if outer:\n"
+        f"{indent}# The chain intentionally mixes tab, two-space, and four-space levels.\n"
+        f"{indent}if first:\n"
+        f"{indent * 2}pass\n"
+        f"{indent}elif second:\n"
+        f"{indent * 2}pass\n"
+        f"{indent}else:\n"
+        f"{indent * 2}pass\n"
+        f"{indent}####\n"
+        "####\n"
+    )
+    assert "\t" not in formatted
+    assert scope_markers.format_source(formatted, indent_width=target_width) == formatted
+####
+
+
+def test_indent_width_handles_mixed_indentation_with_continuations_and_match_cases() -> None:
+    source = (
+        "def outer(\n"
+        "        value: int,\n"
+        ") -> int:\n"
+        "\t# The physical widths below are deliberately irregular but valid.\n"
+        "\ttry:\n"
+        "\t  match value:\n"
+        "\t    case 1:\n"
+        "\t      return value\n"
+        "\t    case _:\n"
+        "\t        return 0\n"
+        "\texcept ValueError:\n"
+        "\t\treturn -1\n"
+    )
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "def outer(\n"
+        "        value: int,\n"
+        ") -> int:\n"
+        "  # The physical widths below are deliberately irregular but valid.\n"
+        "  try:\n"
+        "    match value:\n"
+        "      case 1:\n"
+        "        return value\n"
+        "      ####\n"
+        "      case _:\n"
+        "        return 0\n"
+        "      ####\n"
+        "    ####\n"
+        "  except ValueError:\n"
+        "    return -1\n"
+        "  ####\n"
+        "####\n"
+    )
+####
+
+
+def test_cli_indent_width_refuses_ambiguous_mixed_indentation(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "ambiguous.py"
+    source = "if outer:\n\tpass\n        pass\n"
+    path.write_text(source, encoding="utf-8")
+
+    assert cli.main(["--indent-width", "2", "--fix", "--quiet", str(path)]) == 2
+    assert path.read_text(encoding="utf-8") == source
+    assert "indent" in capsys.readouterr().err.casefold()
+####
+
+
 def test_indent_width_requires_a_positive_value() -> None:
     with pytest.raises(scope_markers.ScopeMarkersError, match="indent_width must be"):
         scope_markers.format_source("pass\n", indent_width=0)
