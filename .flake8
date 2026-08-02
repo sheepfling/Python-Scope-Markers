@@ -1,0 +1,13 @@
+[flake8]
+max-line-length = 100
+# E203 is Black-compatible; E302/E303 account for standalone scope markers.
+extend-ignore = E203,E302,E303
+exclude =
+    .git,
+    .mypy_cache,
+    .pytest_cache,
+    .ruff_cache,
+    .venv,
+    __pycache__,
+    build,
+    dist,
