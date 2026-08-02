@@ -32,6 +32,7 @@ DEFAULT_SKIP_DIRECTORIES: Final = frozenset(
         ".eggs",
         ".git",
         ".hg",
+        ".cache",
         ".mypy_cache",
         ".nox",
         ".pyre",
@@ -40,6 +41,7 @@ DEFAULT_SKIP_DIRECTORIES: Final = frozenset(
         ".ruff_cache",
         ".svn",
         ".tox",
+        ".uv-cache",
         ".venv",
         ".vscode",
         "__pycache__",
@@ -297,21 +299,51 @@ def _compound_nodes(tree: ast.AST, *, mark_stubs: bool) -> list[ast.stmt]:
 
 def _insertion_index(lines: Sequence[str], node: ast.stmt, indentation_width: int) -> int:
     if node.end_lineno is None:
-        raise ValueError("compound statement has no end location")
+        raise ValueError(
+            f"{type(node).__name__} at line {node.lineno} has no end location"
+        )
     ####
-    index = node.end_lineno
-    while index < len(lines):
+    for index in range(node.end_lineno, len(lines)):
         line = lines[index]
         if not _line_body(line).strip(" \t\f"):
-            break
+            return index
         ####
         following_width = _indentation_width(_indentation_prefix(line))
         if following_width <= indentation_width:
-            break
+            return index
         ####
-        index += 1
     ####
-    return index
+    return len(lines)
+####
+
+
+def _match_case_boundaries(tree: ast.AST, lines: Sequence[str]) -> list[ScopeBoundary]:
+    boundaries: list[ScopeBoundary] = []
+    for candidate in ast.walk(tree):
+        if not isinstance(candidate, ast.Match):
+            continue
+        ####
+        for case in candidate.cases:
+            if not case.body:
+                continue
+            ####
+            line_number = getattr(case.pattern, "lineno", None)
+            if not isinstance(line_number, int) or not 1 <= line_number <= len(lines):
+                raise ValueError("match case has an invalid source location")
+            ####
+            indentation = _indentation_prefix(lines[line_number - 1])
+            width = _indentation_width(indentation)
+            boundaries.append(
+                ScopeBoundary(
+                    index=_insertion_index(lines, case.body[-1], width),
+                    indentation=indentation,
+                    indentation_width=width,
+                    line_number=line_number,
+                )
+            )
+        ####
+    ####
+    return boundaries
 ####
 
 
@@ -337,6 +369,7 @@ def _scope_boundaries(
             )
         )
     ####
+    boundaries.extend(_match_case_boundaries(tree, lines))
     return boundaries
 ####
 
@@ -384,7 +417,7 @@ def format_source(
 ####
 
 
-def _matches_exclude(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
+def _matches_pattern(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
     relative = path.relative_to(root).as_posix()
     return any(
         fnmatch(path.name, pattern)
@@ -395,20 +428,58 @@ def _matches_exclude(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
 ####
 
 
-def _is_generated_root(path: Path) -> bool:
-    return any(part.casefold() in SKIP_DIRECTORY_NAMES for part in path.resolve().parts)
+def _is_generated_root(path: Path, use_default_excludes: bool) -> bool:
+    return use_default_excludes and any(
+        _is_skipped_directory(part) for part in path.resolve().parts
+    )
 ####
 
 
 def _is_skipped_directory(name: str) -> bool:
-    return name.casefold() in SKIP_DIRECTORY_NAMES
+    normalized = name.casefold()
+    return normalized in SKIP_DIRECTORY_NAMES or normalized.endswith(".egg-info")
+####
+
+
+def _is_excluded_path(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
+    return path.is_symlink() or _matches_pattern(path, root, patterns)
+####
+
+
+def _should_prune_directory(
+        name: str,
+        path: Path,
+        root: Path,
+        patterns: tuple[str, ...],
+        use_default_excludes: bool,
+) -> bool:
+    return (
+        (use_default_excludes and _is_skipped_directory(name))
+        or _is_excluded_path(path, root, patterns)
+    )
+####
+
+
+def _is_discoverable_file(
+        path: Path,
+        root: Path,
+        include_patterns: tuple[str, ...],
+        exclude_patterns: tuple[str, ...],
+) -> bool:
+    supported = (
+            path.suffix.casefold() == ".py"
+            or _matches_pattern(path, root, include_patterns)
+    )
+    return supported and not _is_excluded_path(path, root, exclude_patterns)
 ####
 
 
 def _walk_python_files(
         root: Path,
         errors: MutableSequence[str],
+        include_patterns: tuple[str, ...],
         exclude_patterns: tuple[str, ...],
+        use_default_excludes: bool,
 ) -> set[Path]:
     files: set[Path] = set()
 
@@ -421,10 +492,8 @@ def _walk_python_files(
         kept_directories: list[str] = []
         for name in sorted(names):
             child = current / name
-            if (
-                    _is_skipped_directory(name)
-                    or child.is_symlink()
-                    or _matches_exclude(child, root, exclude_patterns)
+            if _should_prune_directory(
+                    name, child, root, exclude_patterns, use_default_excludes
             ):
                 continue
             ####
@@ -433,11 +502,7 @@ def _walk_python_files(
         names[:] = kept_directories
         for name in sorted(filenames):
             candidate = current / name
-            if (
-                    candidate.suffix.casefold() == ".py"
-                    and not candidate.is_symlink()
-                    and not _matches_exclude(candidate, root, exclude_patterns)
-            ):
+            if _is_discoverable_file(candidate, root, include_patterns, exclude_patterns):
                 files.add(candidate)
             ####
         ####
@@ -449,16 +514,22 @@ def _walk_python_files(
 def discover_python_files(
         paths: Iterable[Path],
         *,
+        include_patterns: Iterable[str] = (),
         exclude_patterns: Iterable[str] = (),
+        use_default_excludes: bool = True,
 ) -> tuple[list[Path], list[str]]:
     """Resolve explicit inputs into deterministic Python files and diagnostics."""
     files: set[Path] = set()
     errors: list[str] = []
+    includes = tuple(include_patterns)
     patterns = tuple(exclude_patterns)
     for path in paths:
         try:
             if path.is_file():
-                if path.suffix.casefold() != ".py":
+                if (
+                        path.suffix.casefold() != ".py"
+                        and not _matches_pattern(path, path.parent, includes)
+                ):
                     errors.append(f"{path}: expected a .py file or directory")
                 else:
                     files.add(path)
@@ -467,12 +538,16 @@ def discover_python_files(
             ####
             if path.is_dir():
                 resolved_path = path.resolve()
-                if _is_generated_root(path) or _matches_exclude(
+                if _is_generated_root(path, use_default_excludes) or _matches_pattern(
                         resolved_path, resolved_path, patterns
                 ):
                     continue
                 ####
-                files.update(_walk_python_files(path, errors, patterns))
+                files.update(
+                    _walk_python_files(
+                        path, errors, includes, patterns, use_default_excludes
+                    )
+                )
                 continue
             ####
             errors.append(f"{path}: path does not exist")
@@ -487,10 +562,17 @@ def discover_python_files(
 def python_files(
         paths: Iterable[Path],
         *,
+        include_patterns: Iterable[str] = (),
         exclude_patterns: Iterable[str] = (),
+        use_default_excludes: bool = True,
 ) -> list[Path]:
     """Backward-compatible file discovery without returning diagnostics."""
-    files, _ = discover_python_files(paths, exclude_patterns=exclude_patterns)
+    files, _ = discover_python_files(
+        paths,
+        include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
+        use_default_excludes=use_default_excludes,
+    )
     return files
 ####
 

@@ -12,9 +12,11 @@ from pathlib import Path
 import pytest
 
 import scope_markers as package
-import scope_markers._implementation as scope_markers
-from scope_markers import cli
+from scope_markers import api, cli
 from scripts import ci
+
+# Literal ``####`` values intentionally verify the formatter's defining output.
+scope_markers = api
 
 
 def test_nested_scopes_are_closed_inside_out() -> None:
@@ -27,7 +29,9 @@ def test_nested_scopes_are_closed_inside_out() -> None:
         "            return -value\n"
     )
 
-    assert scope_markers.format_source(source) == (
+    formatted = scope_markers.format_source(source)
+
+    assert formatted == (
         "class Example:\n"
         "    def method(self, value: int) -> int:\n"
         "        if value > 0:\n"
@@ -38,6 +42,7 @@ def test_nested_scopes_are_closed_inside_out() -> None:
         "    ####\n"
         "####\n"
     )
+    assert scope_markers.format_source(formatted) == formatted
 ####
 
 
@@ -68,7 +73,7 @@ def test_all_compound_statement_families_are_supported() -> None:
 
     formatted = scope_markers.format_source(source)
 
-    assert formatted.count("####") == 10
+    assert formatted.count("####") == 12
     assert scope_markers.format_source(formatted) == formatted
 ####
 
@@ -103,7 +108,7 @@ def test_elif_else_loop_else_and_try_clauses_get_one_marker_each() -> None:
 ####
 
 
-def test_match_cases_are_clauses_not_separate_marked_statements() -> None:
+def test_match_cases_and_match_statement_are_closed_separately() -> None:
     source = (
         "match value:\n"
         "    case 1:\n"
@@ -114,7 +119,22 @@ def test_match_cases_are_clauses_not_separate_marked_statements() -> None:
         "        pass\n"
     )
 
-    assert scope_markers.format_source(source).count("####") == 1
+    formatted = scope_markers.format_source(source)
+
+    assert formatted == (
+        "match value:\n"
+        "    case 1:\n"
+        "        pass\n"
+        "    ####\n"
+        "    case 2 if ready:\n"
+        "        pass\n"
+        "    ####\n"
+        "    case _:\n"
+        "        pass\n"
+        "    ####\n"
+        "####\n"
+    )
+    assert scope_markers.format_source(formatted) == formatted
 ####
 
 
@@ -254,9 +274,9 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
         ("python311", "-m", "pytest", "-q"),
         ("python311", "-m", "ruff", "check", "."),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
+        ("python311", "scripts/check_black.py"),
         ("python311", "-m", "pyright"),
         ("python311", "-m", "build", "--wheel"),
-        ("scope-markers", "scripts"),
         ("scope-markers", "."),
     )
 ####
@@ -784,6 +804,34 @@ def test_discovery_skips_a_root_inside_a_generated_directory(
 ####
 
 
+def test_discovery_can_disable_default_directory_exclusions(tmp_dir: Path) -> None:
+    generated = tmp_dir / ".venv"
+    generated.mkdir()
+    source = generated / "module.py"
+    source.write_text("pass\n", encoding="utf-8")
+
+    files, errors = scope_markers.discover_python_files(
+        [generated], use_default_excludes=False
+    )
+
+    assert files == [source]
+    assert errors == []
+####
+
+
+def test_discovery_skips_egg_info_directories_by_default(tmp_dir: Path) -> None:
+    metadata = tmp_dir / "scope_markers.egg-info"
+    metadata.mkdir()
+    source = metadata / "generated.py"
+    source.write_text("pass\n", encoding="utf-8")
+
+    files, errors = scope_markers.discover_python_files([tmp_dir])
+
+    assert files == []
+    assert errors == []
+####
+
+
 def test_discovery_supports_multiple_roots_and_exclude_patterns(tmp_dir: Path) -> None:
     first = tmp_dir / "first"
     second = tmp_dir / "second"
@@ -803,6 +851,25 @@ def test_discovery_supports_multiple_roots_and_exclude_patterns(tmp_dir: Path) -
 
     assert files == [first_source, second_source]
     assert errors == []
+####
+
+
+def test_discovery_include_patterns_allow_python_compatible_extensions(tmp_dir: Path) -> None:
+    starlark = tmp_dir / "BUILD.bzl"
+    starlark.write_text("def rule():\n    pass\n", encoding="utf-8")
+
+    files, errors = scope_markers.discover_python_files([tmp_dir])
+    assert files == []
+    assert errors == []
+
+    files, errors = scope_markers.discover_python_files(
+        [tmp_dir], include_patterns=("*.bzl",)
+    )
+
+    assert files == [starlark]
+    assert errors == []
+    assert cli.main(["--include", "*.bzl", "--fix", "--quiet", str(tmp_dir)]) == 0
+    assert starlark.read_text(encoding="utf-8").endswith("####\n")
 ####
 
 
@@ -838,6 +905,22 @@ def test_cli_accepts_multiple_roots_and_exclude_patterns(tmp_dir: Path) -> None:
 ####
 
 
+def test_cli_default_excludes_can_be_disabled(tmp_dir: Path) -> None:
+    generated = tmp_dir / ".uv-cache"
+    generated.mkdir()
+    source = generated / "module.py"
+    source.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert cli.main(["--fix", "--quiet", str(tmp_dir)]) == 0
+    assert not source.read_text(encoding="utf-8").endswith("####\n")
+
+    assert cli.main(
+        ["--no-default-excludes", "--fix", "--quiet", str(tmp_dir)]
+    ) == 0
+    assert source.read_text(encoding="utf-8").endswith("####\n")
+####
+
+
 def test_cli_supports_repeated_exclude_patterns(tmp_dir: Path) -> None:
     first = tmp_dir / "first.py"
     second = tmp_dir / "second.generated.py"
@@ -864,6 +947,17 @@ def test_token_error_reports_line_and_column(tmp_dir: Path) -> None:
 ####
 
 
+def test_process_file_reports_missing_input_file(tmp_dir: Path) -> None:
+    path = tmp_dir / "missing.py"
+
+    changed, error = scope_markers.process_file(path, fix=False)
+
+    assert changed is False
+    assert error is not None
+    assert str(path) in error
+####
+
+
 def test_version_is_loaded_from_installed_metadata() -> None:
     assert scope_markers.__version__ == installed_version("scope-markers")
 ####
@@ -873,6 +967,53 @@ def test_package_init_does_not_reexport_implementation_api() -> None:
     assert not hasattr(package, "format_source")
     assert not hasattr(package, "process_file")
     assert not hasattr(package, "main")
+####
+
+
+def test_programmatic_api_exposes_stable_formatter_functions() -> None:
+    assert api.format_source("def example():\n    pass\n").endswith("####\n")
+    assert api.process_file is scope_markers.process_file
+    assert api.discover_python_files is scope_markers.discover_python_files
+####
+
+
+def test_programmatic_api_surface_is_complete_and_usable(tmp_dir: Path) -> None:
+    assert api.__all__ == (
+        "FileInspection",
+        "ScopeBoundary",
+        "__version__",
+        "discover_python_files",
+        "format_source",
+        "inspect_file",
+        "process_file",
+        "python_files",
+    )
+    assert api.__version__ == installed_version("scope-markers")
+
+    path = tmp_dir / "example.py"
+    path.write_text("def example():\n    pass\n", encoding="utf-8")
+    inspection = api.inspect_file(path)
+
+    assert isinstance(inspection, api.FileInspection)
+    assert inspection.path == path
+    assert inspection.changed is True
+    assert api.format_source(inspection.source) == inspection.formatted
+    assert api.process_file(path, fix=False) == (True, None)
+    assert api.process_file(path, fix=True) == (True, None)
+    assert api.process_file(path, fix=False) == (False, None)
+
+    starlark = tmp_dir / "BUILD.bzl"
+    starlark.write_text("def rule():\n    pass\n", encoding="utf-8")
+    discovered, errors = api.discover_python_files(
+        [tmp_dir], include_patterns=("*.bzl",), exclude_patterns=("example.py",)
+    )
+
+    assert discovered == [starlark]
+    assert errors == []
+    assert api.python_files([starlark], include_patterns=("*.bzl",)) == [starlark]
+
+    boundary = api.ScopeBoundary(0, "", 0, 1)
+    assert boundary.line_number == 1
 ####
 
 
@@ -906,6 +1047,49 @@ def test_check_fix_and_diff_exit_codes(tmp_dir: Path, capsys: pytest.CaptureFixt
     assert "+####" in diff_output
     assert cli.main(["--fix", "--quiet", str(path)]) == 0
     assert cli.main(["--quiet", str(path)]) == 0
+####
+
+
+def test_cli_diff_marks_a_missing_final_newline(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_dir / "no-final-newline.py"
+    path.write_bytes(b"def example():\n    pass")
+
+    assert cli.main(["--diff", str(path)]) == 1
+    output = capsys.readouterr().out
+
+    assert "-    pass\n\\ No newline at end of file\n+    pass\n" in output
+    assert "-    pass+    pass" not in output
+####
+
+
+def test_cli_diff_normalizes_bare_carriage_return_lines(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_dir / "bare-cr.py"
+    path.write_bytes(b"def example():\r    pass\r")
+
+    assert cli.main(["--diff", str(path)]) == 1
+    output = capsys.readouterr().out
+
+    assert "    pass\n+####\n" in output
+    assert "\r" not in output
+####
+
+
+def test_cli_diff_normalizes_mixed_line_endings(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_dir / "mixed-newlines.py"
+    path.write_bytes(b"def first():\r\n    pass\r\ndef second():\n    pass\n")
+
+    assert cli.main(["--diff", str(path)]) == 1
+    output = capsys.readouterr().out
+
+    assert "\r" not in output
+    assert "-    pass+    pass" not in output
+    assert output.count("+####\n") == 2
 ####
 
 
@@ -956,18 +1140,60 @@ def test_cli_help_option_lists_supported_options(
 
     output = capsys.readouterr().out
     assert exception.value.code == 0
-    for option in ("--fix", "--diff", "--mark-stubs", "--quiet", "--exclude", "--version"):
+    for option in (
+        "--fix",
+        "--diff",
+        "--mark-stubs",
+        "--quiet",
+        "--verbose",
+        "--no-default-excludes",
+        "--include",
+        "--exclude",
+        "--version",
+    ):
         assert option in output
     ####
 ####
 
 
-def test_cli_rejects_conflicting_fix_and_diff_options() -> None:
+def test_cli_rejects_conflicting_fix_and_diff_options(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
     with pytest.raises(SystemExit) as exception:
         cli.main(["--fix", "--diff"])
     ####
 
     assert exception.value.code == 2
+    assert "argument --diff: not allowed with argument --fix" in capsys.readouterr().err
+####
+
+
+def test_cli_rejects_unknown_arguments_with_usage_error(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exception:
+        cli.main(["--not-a-real-option"])
+    ####
+
+    assert exception.value.code == 2
+    assert "unrecognized arguments: --not-a-real-option" in capsys.readouterr().err
+####
+
+
+def test_cli_verbose_reports_status_without_polluting_diff(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_dir / "example.py"
+    path.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert cli.main(["--diff", "--verbose", str(path)]) == 1
+    captured = capsys.readouterr()
+
+    assert "+####\n" in captured.out
+    assert f"needs markers: {path}" in captured.err
+
+    assert cli.main(["--fix", "--verbose", str(path)]) == 0
+    assert f"fixed: {path}" in capsys.readouterr().out
 ####
 
 

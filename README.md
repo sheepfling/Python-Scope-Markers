@@ -16,7 +16,14 @@ The package is intentionally layered:
 
 New CLI options or commands should be added to `cli.py`; new formatter behavior
 belongs in `_implementation.py`. Import implementation APIs from their owning
-module rather than relying on package-level re-exports.
+module rather than relying on package-level re-exports. For programmatic use,
+import the supported functions from `scope_markers.api`.
+
+```python
+from scope_markers.api import format_source
+
+formatted = format_source(source, filename="BUILD.bzl")
+```
 
 ## Quick use
 
@@ -45,15 +52,51 @@ itself, or is inside, a generated directory such as `build`, `.venv`, or
 `node_modules` is skipped. Explicitly naming a `.py` file bypasses directory
 pruning and custom excludes.
 
+The default directory exclusions include common VCS, virtual-environment,
+cache, build, and dependency directories such as `.git`, `.venv`, `.uv-cache`,
+`.cache`, `build`, `dist`, `*.egg-info`, and `node_modules`. Use `--no-default-excludes` when
+you intentionally need to scan those directories; explicit `--exclude`
+patterns still apply.
+
+The default invocation is check mode: it reports files needing markers and
+returns exit status `1` without changing them. Use `--diff` to show a patch or
+`--fix` to write changes:
+
+```bash
+scope-markers src tests                 # check only
+scope-markers --diff src tests          # check and print a patch
+scope-markers --fix src tests           # rewrite files
+scope-markers --mark-stubs --fix src    # also mark stub-only functions
+scope-markers --verbose src tests       # report every file's status
+```
+
+`--quiet` and `--verbose` are mutually exclusive. In `--diff --verbose` mode,
+the patch remains clean on standard output and per-file status is reported on
+standard error.
+
 Add repeatable glob exclusions for project-specific generated or vendor trees:
 
 ```bash
 scope-markers --exclude generated --exclude "*.generated.py" src tests
 ```
 
-Exclusion patterns match a path's basename, its path relative to the supplied
-root, or its normalized path. They apply to recursively discovered files and
-directories; explicit `.py` paths remain explicit inputs.
+Repeat `--exclude` for an additive OR list: a recursively discovered path is
+skipped when it matches any supplied pattern. Each pattern is checked against
+the basename, the path relative to its scan root, and the normalized full path.
+
+They apply to recursively discovered files and directories; explicit `.py` paths
+remain explicit inputs.
+
+Python-compatible files with another extension can be opted in with repeatable
+include patterns. This is useful for formats such as Starlark, whose files
+often use `.bzl`:
+
+```bash
+scope-markers --include "*.bzl" --fix .
+```
+
+Included files still need to be parseable by Python's AST, and exclusions and
+generated-directory pruning take precedence.
 
 Exit statuses are stable:
 
@@ -86,6 +129,11 @@ contain markers. A downstream pipeline should use this order:
 4. Flake8, Pyright, tests, and packaging checks
 ```
 
+Keep this ordering as a pipeline contract when adding or upgrading hooks: every
+formatter or autofix hook that can change Python layout belongs before
+`scope-markers`, while read-only linting, type checking, tests, and packaging
+belong after it. This keeps pre-commit, local editor actions, and CI consistent.
+
 Do not run Ruff format or Black after `scope-markers --fix`. Both formatters
 interpret `####` as an ordinary comment and may normalize the blank lines around
 markers or rewrite multiline string literals. There is no formatter rule that
@@ -106,7 +154,7 @@ repos:
     rev: <your-ruff-version>
     hooks:
       - id: ruff-check
-        args: [--fix]
+        args: [ --fix ]
       - id: ruff-format
   - repo: local
     hooks:
@@ -114,11 +162,11 @@ repos:
         name: scope markers
         entry: scope-markers --fix
         language: system
-        types: [python]
+        types: [ python ]
 ```
 
 If files already contain scope markers, run the ordinary formatter once before
-enabling the marker hook. Subsequent changes should flow through the same order
+enabling the marker hook. Later changes should flow through the same order
 to avoid formatter churn.
 
 ## Marker style detection
@@ -140,9 +188,9 @@ One marker is emitted after each complete Python compound statement:
 - complete `try` / `except`, `except*`, `else`, and `finally` statements;
 - complete `match` statements.
 
-Clauses are not marked separately. For example, one marker closes an entire
-`if` chain, and one marker closes an entire `match` statement rather than each
-`case` block.
+Clause boundaries are marked at their own indentation. For example, an `if`
+chain receives one marker, while each `case` block receives a clause marker and
+the enclosing `match` statement receives its own outer marker.
 
 Documentation-only and ellipsis-only function stubs are skipped by default so
 that overloads, protocols, and interface stubs remain compact. Use
@@ -191,6 +239,13 @@ so hard-link identity and nonstandard filesystem metadata are outside the
 formatter's preservation contract.
 
 ## Install as a command
+
+From a cloned checkout, install the command with one of these supported methods:
+
+```bash
+git clone https://github.com/sheepfling/Python-Scope-Markers.git
+cd Python-Scope-Markers
+```
 
 The script can always be copied directly. The project can also be installed as a
 small command-line tool:
@@ -241,7 +296,7 @@ repos:
         name: scope markers
         entry: scope-markers --fix
         language: system
-        types: [python]
+        types: [ python ]
 ```
 
 ## Development
@@ -266,15 +321,16 @@ scope-markers --fix src tests scripts
 
 The complete validation roles are:
 
-| Tool          | Command                    | Purpose                                                                   |
-|---------------|----------------------------|---------------------------------------------------------------------------|
-| Ruff          | `ruff check .`             | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
-| Black         | `black src tests scripts`  | Ordinary Python formatting before markers                                 |
-| Flake8        | `flake8 src scripts tests` | Compatibility lint pass using `.flake8`                                   |
-| Pyright       | `pyright`                  | Strict type checking for `src` and `scripts`                              |
-| Pytest        | `pytest -q`                | Regression test suite                                                     |
-| Build         | `python -m build --wheel`  | Wheel packaging check                                                     |
-| Scope markers | `scope-markers .`          | Project-specific marker check                                             |
+| Tool                | Command                         | Purpose                                                                   |
+|---------------------|---------------------------------|---------------------------------------------------------------------------|
+| Ruff                | `ruff check .`                  | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
+| Black               | `black src tests scripts`       | Ordinary Python formatting before markers                                 |
+| Black compatibility | `python scripts/check_black.py` | Black format/check smoke test with standalone markers removed             |
+| Flake8              | `flake8 src scripts tests`      | Compatibility lint pass using `.flake8`                                   |
+| Pyright             | `pyright`                       | Strict type checking for `src` and `scripts`                              |
+| Pytest              | `pytest -q`                     | Regression test suite                                                     |
+| Build               | `python -m build --wheel`       | Wheel packaging check                                                     |
+| Scope markers       | `scope-markers .`               | Project-specific marker check                                             |
 
 Ruff's annotation rules require parameters and return values to be annotated for
 new functions, methods, and test helpers. Pyright then type-checks the package
