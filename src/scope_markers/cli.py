@@ -21,6 +21,19 @@ from .api import (
 )
 
 
+def _positive_indent_width(value: str) -> int:
+    try:
+        width = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+    ####
+    if width < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    ####
+    return width
+####
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
@@ -30,6 +43,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--mark-stubs",
         action="store_true",
         help="also discover .pyi files and mark documentation-only and ellipsis-only stubs",
+    )
+    parser.add_argument(
+        "--indent-width",
+        type=_positive_indent_width,
+        metavar="WIDTH",
+        help="normalize logical block indentation to this many spaces before marking",
     )
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--quiet", action="store_true", help="suppress status output")
@@ -76,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     fix = bool(args.fix)
     show_diff = bool(args.diff)
     mark_stubs = bool(args.mark_stubs)
+    indent_width = args.indent_width if isinstance(args.indent_width, int) else None
     quiet = bool(args.quiet)
     verbose = bool(args.verbose)
     fail_fast = bool(args.fail_fast)
@@ -99,7 +119,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path in files:
         processed_files += 1
         try:
-            inspection = inspect_file(path, mark_stubs=mark_stubs)
+            inspection = inspect_file(
+                path, mark_stubs=mark_stubs, indent_width=indent_width
+            )
             if not inspection.changed:
                 if verbose:
                     print(f"clean: {path}", file=sys.stderr if show_diff else sys.stdout)

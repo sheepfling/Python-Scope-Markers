@@ -137,11 +137,18 @@ def _physical_byte_lines(data: bytes) -> Iterator[bytes]:
 
 
 def _byte_line_reader(data: bytes) -> Callable[[], bytes]:
-    """Return a newline-preserving reader for ``tokenize.detect_encoding``."""
+    """Return LF-normalized physical records for ``tokenize.detect_encoding``."""
     lines = iter(_physical_byte_lines(data))
 
     def readline() -> bytes:
-        return next(lines, b"")
+        line = next(lines, b"")
+        if line.endswith(b"\r\n"):
+            return line[:-2] + b"\n"
+        ####
+        if line.endswith(b"\r"):
+            return line[:-1] + b"\n"
+        ####
+        return line
     ####
 
     return readline
@@ -244,9 +251,19 @@ def _indentation_width(indentation: str) -> int:
 
 
 def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
-    """Tokenize source while retaining Python's CR, LF, and CRLF rows."""
-    stream = StringIO(source, newline="")
-    return tokenize.generate_tokens(stream.readline)
+    """Tokenize source using LF records while preserving physical source rows."""
+    lines = iter(_physical_lines(source))
+
+    def readline() -> str:
+        line = next(lines, "")
+        ending = _line_ending(line)
+        if ending is None:
+            return line
+        ####
+        return f"{line[: -len(ending)]}\n"
+    ####
+
+    return tokenize.generate_tokens(readline)
 ####
 
 
@@ -531,13 +548,99 @@ def _ast_equivalent(left: ast.AST, right: ast.AST) -> bool:
 ####
 
 
+def _block_indentation_depths(lines: Sequence[str], source: str) -> dict[str, int]:
+    """Map source indentation prefixes to their tokenizer-recognized depths."""
+    depths = {"": 0}
+    depth = 0
+    for token in _token_stream(source):
+        if token.type == tokenize.INDENT:
+            depth += 1
+            row = token.start[0]
+            if 1 <= row <= len(lines):
+                depths[_indentation_prefix(lines[row - 1])] = depth
+            ####
+        elif token.type == tokenize.DEDENT:
+            depth -= 1
+        ####
+    ####
+    return depths
+####
+
+
+def _replace_indentation(line: str, indentation: str) -> str:
+    prefix = _indentation_prefix(line)
+    return f"{indentation}{line[len(prefix):]}"
+####
+
+
+def _reindent_source(source: str, indent_width: int) -> str:
+    """Normalize logical block indentation while retaining continuation alignment."""
+    if indent_width < 1:
+        raise ScopeMarkersError("indent_width must be a positive integer")
+    ####
+    original_tree = ast.parse(source)
+    lines = _physical_lines(source)
+    prefix_depths = _block_indentation_depths(lines, source)
+    depth = 0
+    at_statement_start = True
+    for token in _token_stream(source):
+        if token.type == tokenize.INDENT:
+            depth += 1
+            continue
+        ####
+        if token.type == tokenize.DEDENT:
+            depth -= 1
+            continue
+        ####
+        if token.type == tokenize.NEWLINE:
+            at_statement_start = True
+            continue
+        ####
+        if token.type == tokenize.COMMENT and at_statement_start:
+            row = token.start[0]
+            if 1 <= row <= len(lines):
+                prefix = _indentation_prefix(lines[row - 1])
+                comment_depth = prefix_depths.get(prefix)
+                if comment_depth is not None:
+                    lines[row - 1] = _replace_indentation(
+                        lines[row - 1], " " * (indent_width * comment_depth)
+                    )
+                ####
+            ####
+            continue
+        ####
+        if token.type in (tokenize.NL, tokenize.ENDMARKER):
+            continue
+        ####
+        if at_statement_start:
+            row = token.start[0]
+            if 1 <= row <= len(lines):
+                lines[row - 1] = _replace_indentation(
+                    lines[row - 1], " " * (indent_width * depth)
+                )
+            ####
+        ####
+        at_statement_start = False
+    ####
+    reindented = "".join(lines)
+    if not _ast_equivalent(ast.parse(reindented), original_tree):
+        raise ScopeMarkersError("indentation normalization changed the Python AST")
+    ####
+    return reindented
+####
+
+
 def format_source(
         source: str,
         *,
         filename: str = "<unknown>",
         mark_stubs: bool = False,
+        indent_width: int | None = None,
 ) -> str:
     """Return source with canonical markers after supported compound statements."""
+    if indent_width is not None:
+        source = _reindent_source(source, indent_width)
+    ####
     marker = _detect_marker_style(source)
     clean_source = _without_markers(source, marker)
     tree = ast.parse(clean_source, filename=filename)
@@ -597,7 +700,7 @@ def _is_skipped_directory(name: str) -> bool:
 
 
 def _is_excluded_path(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
-    return path.is_symlink() or _matches_pattern(path, root, patterns)
+    return _matches_pattern(path, root, patterns)
 ####
 
 
@@ -612,7 +715,22 @@ def _should_prune_directory(
     # explicitly excluded directories must never enter recursive discovery.
     return (
             (use_default_excludes and _is_skipped_directory(name))
+            or path.is_symlink()
             or _is_excluded_path(path, root, patterns)
+    )
+####
+
+
+def _is_supported_source_file(
+        path: Path,
+        root: Path,
+        include_patterns: tuple[str, ...],
+        include_stubs: bool,
+) -> bool:
+    return (
+        path.suffix.casefold() == ".py"
+        or (include_stubs and path.suffix.casefold() == ".pyi")
+        or _matches_pattern(path, root, include_patterns)
     )
 ####
 
@@ -624,12 +742,10 @@ def _is_discoverable_file(
         exclude_patterns: tuple[str, ...],
         include_stubs: bool,
 ) -> bool:
-    supported = (
-            path.suffix.casefold() == ".py"
-            or (include_stubs and path.suffix.casefold() == ".pyi")
-            or _matches_pattern(path, root, include_patterns)
-    )
-    return supported and not _is_excluded_path(path, root, exclude_patterns)
+    """Return whether recursive discovery may process a supported regular file."""
+    return _is_supported_source_file(
+        path, root, include_patterns, include_stubs
+    ) and not _is_excluded_path(path, root, exclude_patterns)
 ####
 
 
@@ -663,6 +779,9 @@ def _walk_python_files(
         names[:] = kept_directories
         for name in sorted(filenames):
             candidate = current / name
+            if candidate.is_symlink():
+                continue
+            ####
             if _is_discoverable_file(
                     candidate,
                     root,
@@ -716,11 +835,10 @@ def discover_python_files(
     for path in paths:
         try:
             if path.is_file():
-                if not _is_discoverable_file(
+                if not _is_supported_source_file(
                         path,
                         path.parent,
                         includes,
-                        (),
                         include_stubs,
                 ):
                     errors.append(f"{path}: expected a supported source file or directory")
@@ -780,10 +898,17 @@ def python_files(
 ####
 
 
-def inspect_file(path: Path, *, mark_stubs: bool = False) -> FileInspection:
+def inspect_file(
+        path: Path, *, mark_stubs: bool = False, indent_width: int | None = None
+) -> FileInspection:
     """Read and canonicalize one Python file without modifying it."""
     source, encoding = _read_source(path)
-    formatted = format_source(source, filename=str(path), mark_stubs=mark_stubs)
+    formatted = format_source(
+        source,
+        filename=str(path),
+        mark_stubs=mark_stubs,
+        indent_width=indent_width,
+    )
     return FileInspection(path=path, source=source, formatted=formatted, encoding=encoding)
 ####
 
@@ -840,10 +965,13 @@ def process_file(
         *,
         fix: bool,
         mark_stubs: bool = False,
+        indent_width: int | None = None,
 ) -> tuple[bool, str | None]:
     """Check or fix one file and return ``(changed, error)``."""
     try:
-        inspection = inspect_file(path, mark_stubs=mark_stubs)
+        inspection = inspect_file(
+            path, mark_stubs=mark_stubs, indent_width=indent_width
+        )
         if inspection.changed and fix:
             _write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####

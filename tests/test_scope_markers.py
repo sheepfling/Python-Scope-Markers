@@ -46,6 +46,93 @@ def test_nested_scopes_are_closed_inside_out() -> None:
 
 
 @pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_indent_width_normalizes_blocks_and_regenerates_markers(newline: str) -> None:
+    source = (
+        "if outer:\n"
+        "    # The nested scope follows.\n"
+        "    if inner:\n"
+        "        pass\n"
+        "    ####\n"
+        "####\n"
+    ).replace("\n", newline)
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "if outer:\n"
+        "  # The nested scope follows.\n"
+        "  if inner:\n"
+        "    pass\n"
+        "  ####\n"
+        "####\n"
+    ).replace("\n", newline)
+####
+
+
+def test_indent_width_preserves_continuation_alignment_and_converts_block_tabs() -> None:
+    source = (
+        "if ready:\n"
+        "\tvalue = (\n"
+        "        first\n"
+        "        + second\n"
+        "    )\n"
+    )
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "if ready:\n"
+        "  value = (\n"
+        "        first\n"
+        "        + second\n"
+        "    )\n"
+        "####\n"
+    )
+####
+
+
+def test_indent_width_preserves_if_elif_chain_boundaries() -> None:
+    source = "if first:\n    pass\nelif second:\n    pass\n"
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "if first:\n"
+        "  pass\n"
+        "elif second:\n"
+        "  pass\n"
+        "####\n"
+    )
+####
+
+
+@pytest.mark.parametrize(("source_width", "target_width"), ((2, 4), (4, 2)))
+def test_indent_width_converts_between_two_and_four_spaces(
+        source_width: int, target_width: int
+) -> None:
+    source_indent = " " * source_width
+    target_indent = " " * target_width
+    source = (
+        "class Example:\n"
+        f"{source_indent}def method() -> None:\n"
+        f"{source_indent * 2}pass\n"
+    )
+
+    formatted = scope_markers.format_source(source, indent_width=target_width)
+
+    assert formatted == (
+        "class Example:\n"
+        f"{target_indent}def method() -> None:\n"
+        f"{target_indent * 2}pass\n"
+        f"{target_indent}####\n"
+        "####\n"
+    )
+    assert scope_markers.format_source(formatted, indent_width=target_width) == formatted
+####
+
+
+def test_indent_width_requires_a_positive_value() -> None:
+    with pytest.raises(scope_markers.ScopeMarkersError, match="indent_width must be"):
+        scope_markers.format_source("pass\n", indent_width=0)
+    ####
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
 def test_all_compound_statement_families_are_supported(newline: str) -> None:
     source = (
         "async def worker(items: object) -> None:\n"
@@ -1121,7 +1208,7 @@ def test_atomic_fix_preserves_executable_bits(tmp_path: Path) -> None:
 ####
 
 
-def test_explicit_symlink_updates_target_without_replacing_link(tmp_path: Path) -> None:
+def test_cli_fix_updates_an_explicit_symlink_without_replacing_it(tmp_path: Path) -> None:
     if not hasattr(os, "symlink"):
         pytest.skip("symlinks are unavailable")
     ####
@@ -1134,7 +1221,11 @@ def test_explicit_symlink_updates_target_without_replacing_link(tmp_path: Path) 
         pytest.skip("symlink creation is not permitted")
     ####
 
-    assert scope_markers.process_file(link, fix=True) == (True, None)
+    files, errors = scope_markers.discover_python_files([link])
+
+    assert files == [link]
+    assert errors == []
+    assert cli.main(["--fix", "--quiet", str(link)]) == 0
     assert link.is_symlink()
     assert target.read_text(encoding="utf-8").endswith("####\n")
 ####
@@ -1415,6 +1506,15 @@ def test_cli_mark_stubs_option_is_forwarded(tmp_path: Path) -> None:
 ####
 
 
+def test_cli_indent_width_reindents_and_marks_in_one_fix(tmp_path: Path) -> None:
+    path = tmp_path / "example.py"
+    path.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert cli.main(["--indent-width", "2", "--fix", "--quiet", str(path)]) == 0
+    assert path.read_text(encoding="utf-8") == "def example():\n  pass\n####\n"
+####
+
+
 def test_cli_accepts_multiple_roots_and_exclude_patterns(tmp_path: Path) -> None:
     first = tmp_path / "first.py"
     second_root = tmp_path / "second"
@@ -1635,6 +1735,7 @@ def test_cli_help_option_lists_supported_options(
             "--fix",
             "--diff",
             "--mark-stubs",
+            "--indent-width",
             "--quiet",
             "--verbose",
             "--fail-fast",
@@ -1681,6 +1782,18 @@ def test_cli_rejects_options_missing_values(
 
     assert exception.value.code == 2
     assert "argument --include: expected one argument" in capsys.readouterr().err
+####
+
+
+def test_cli_rejects_non_positive_indent_width(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exception:
+        cli.main(["--indent-width", "0"])
+    ####
+
+    assert exception.value.code == 2
+    assert "argument --indent-width: must be a positive integer" in capsys.readouterr().err
 ####
 
 

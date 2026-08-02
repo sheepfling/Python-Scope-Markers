@@ -7,7 +7,8 @@ without requiring callers to import private names directly. Use
 inspection, ``process_file`` for checking or rewriting one file, and
 ``discover_python_files``/``python_files`` for discovery. Pass
 ``include_stubs=True`` to the discovery functions when `.pyi` files belong in
-the result.
+the result, or pass ``indent_width`` to formatting or file-inspection functions
+to normalize logical block indentation before markers are regenerated.
 """
 
 from ._implementation import (

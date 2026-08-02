@@ -67,6 +67,7 @@ scope-markers src tests                 # check only
 scope-markers --diff src tests          # check and print a patch
 scope-markers --fix src tests           # rewrite files
 scope-markers --mark-stubs --fix src    # include .pyi files and mark stub-only functions
+scope-markers --indent-width 2 --fix src  # use two-space block indentation and mark
 scope-markers --verbose src tests       # report every file's status
 scope-markers --fail-fast .             # stop at the first needed fix/error
 ```
@@ -76,6 +77,12 @@ output is reserved for patch bytes; status and diagnostic messages go to
 standard error. This keeps both changed and already-clean runs safe to redirect
 to a patch file. `--diff --verbose` additionally reports each file's status on
 standard error.
+
+`--indent-width WIDTH` normalizes logical Python block indentation to that many
+spaces before scope markers are regenerated. It converts block-indentation tabs
+to spaces and adjusts block comments, but deliberately preserves multiline
+continuation alignment and blank-line whitespace. It is not a replacement for
+a full code formatter; when using one, run it before scope markers.
 
 Diff output preserves LF and CRLF records and includes explicit markers for a
 missing final newline. `--diff` rejects changed files with bare-CR line endings
