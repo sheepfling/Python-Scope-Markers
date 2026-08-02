@@ -446,11 +446,14 @@ def _ast_equivalent(left: ast.AST, right: ast.AST) -> bool:
             continue
         ####
         if isinstance(current_left, list):
-            if not isinstance(current_right, list) or len(current_left) != len(current_right):
+            if not isinstance(current_right, list):
                 return False
             ####
             left_items = cast(list[object], current_left)
             right_items = cast(list[object], current_right)
+            if len(left_items) != len(right_items):
+                return False
+            ####
             pending.extend(zip(reversed(left_items), reversed(right_items), strict=True))
             continue
         ####
