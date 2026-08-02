@@ -21,19 +21,19 @@ def ci_commands(
     if fix:
         ruff += ("--fix",)
     ####
-    ruff += (".",)
+    ruff += ("src", "scripts", "tests")
     scope_markers = ("scope-markers",)
     if fix:
         scope_markers += ("--fix",)
     ####
-    scope_markers += (".",)
+    scope_markers += ("src", "scripts", "tests")
     return (
         (python, "-m", "pytest", "-q"),
         (python, "scripts/check_diff.py"),
         ruff,
         (python, "-m", "flake8", "src", "scripts", "tests"),
         (python, "scripts/check_black.py"),
-        (python, "-m", "pyright"),
+        (python, "scripts/check_pyright.py"),
         (python, "scripts/check_build.py"),
         scope_markers,
     )

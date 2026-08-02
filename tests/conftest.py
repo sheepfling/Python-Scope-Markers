@@ -14,3 +14,10 @@ def tmp_dir() -> Iterator[Path]:
         yield Path(directory)
     ####
 ####
+
+
+@pytest.fixture
+def tmp_path(tmp_dir: Path) -> Path:
+    """Compatibility alias for tests that still use pytest's fixture name."""
+    return tmp_dir
+####

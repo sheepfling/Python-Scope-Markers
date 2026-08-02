@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -458,12 +457,12 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
     assert ci.ci_commands("python311") == (
         ("python311", "-m", "pytest", "-q"),
         ("python311", "scripts/check_diff.py"),
-        ("python311", "-m", "ruff", "check", "."),
+        ("python311", "-m", "ruff", "check", "src", "scripts", "tests"),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
         ("python311", "scripts/check_black.py"),
-        ("python311", "-m", "pyright"),
+        ("python311", "scripts/check_pyright.py"),
         ("python311", "scripts/check_build.py"),
-        ("scope-markers", "."),
+        ("scope-markers", "src", "scripts", "tests"),
     )
 ####
 
@@ -472,12 +471,21 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
     assert ci.ci_commands("python311", fix=True) == (
         ("python311", "-m", "pytest", "-q"),
         ("python311", "scripts/check_diff.py"),
-        ("python311", "-m", "ruff", "check", "--fix", "."),
+        (
+            "python311",
+            "-m",
+            "ruff",
+            "check",
+            "--fix",
+            "src",
+            "scripts",
+            "tests",
+        ),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
         ("python311", "scripts/check_black.py"),
-        ("python311", "-m", "pyright"),
+        ("python311", "scripts/check_pyright.py"),
         ("python311", "scripts/check_build.py"),
-        ("scope-markers", "--fix", "."),
+        ("scope-markers", "--fix", "src", "scripts", "tests"),
     )
 ####
 
@@ -485,8 +493,18 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
 def test_ci_main_runs_all_commands_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
     commands = (("first",), ("second",), ("third",))
     called: list[tuple[str, ...]] = []
-    monkeypatch.setattr(ci, "ci_commands", lambda: commands)
-    monkeypatch.setattr(ci, "run_command", lambda command: called.append(command) or 0)
+
+    def fake_ci_commands() -> tuple[tuple[str, ...], ...]:
+        return commands
+    ####
+
+    def record_command(command: tuple[str, ...]) -> int:
+        called.append(command)
+        return 0
+    ####
+
+    monkeypatch.setattr(ci, "ci_commands", fake_ci_commands)
+    monkeypatch.setattr(ci, "run_command", record_command)
 
     assert ci.main() == 0
     assert called == list(commands)
@@ -495,12 +513,22 @@ def test_ci_main_runs_all_commands_in_order(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_ci_main_forwards_fix_option(monkeypatch: pytest.MonkeyPatch) -> None:
     received: list[bool] = []
+
+    def fake_ci_commands(*, fix: bool = False) -> tuple[tuple[str, ...], ...]:
+        received.append(fix)
+        return ()
+    ####
+
+    def successful_command(command: tuple[str, ...]) -> int:
+        return 0
+    ####
+
     monkeypatch.setattr(
         ci,
         "ci_commands",
-        lambda fix=False: received.append(fix) or (),
+        fake_ci_commands,
     )
-    monkeypatch.setattr(ci, "run_command", lambda command: 0)
+    monkeypatch.setattr(ci, "run_command", successful_command)
 
     assert ci.main(["--fix"]) == 0
     assert received == [True]
@@ -541,7 +569,7 @@ def test_ci_main_stops_and_returns_the_first_failure(monkeypatch: pytest.MonkeyP
 
 
 def test_flake8_configuration_allows_marker_and_black_compatible_syntax(
-    tmp_dir: Path,
+    tmp_path: Path,
 ) -> None:
     source = (
         "def first(values: list[int]) -> list[int]:\n"
@@ -550,7 +578,7 @@ def test_flake8_configuration_allows_marker_and_black_compatible_syntax(
         "def second() -> None:\n"
         "    pass\n"
     )
-    path = tmp_dir / "marked.py"
+    path = tmp_path / "marked.py"
     path.write_text(source, encoding="utf-8")
     command = [sys.executable, "-m", "flake8", str(path)]
     project_root = Path(__file__).resolve().parents[1]
@@ -590,7 +618,9 @@ def test_black_marker_removal_preserves_unicode_line_separators() -> None:
         "####\n"
     )
 
-    cleaned = check_black._without_standalone_markers(source)
+    cleaned = check_black._without_standalone_markers(  # pyright: ignore[reportPrivateUsage]
+        source
+    )
 
     assert cleaned == source.removesuffix("####\n")
     compile(cleaned, "unicode-separator.py", "exec")
@@ -888,8 +918,8 @@ def test_top_level_function_marker_returns_to_column_zero_after_tabbed_body() ->
 ####
 
 
-def test_inconsistent_tab_and_space_indentation_is_reported(tmp_dir: Path) -> None:
-    path = tmp_dir / "inconsistent.py"
+def test_inconsistent_tab_and_space_indentation_is_reported(tmp_path: Path) -> None:
+    path = tmp_path / "inconsistent.py"
     path.write_bytes(b"if outer:\n\tpass\n    pass\n")
 
     changed, error = scope_markers.process_file(path, fix=False)
@@ -976,8 +1006,8 @@ def test_extremely_long_physical_line_is_preserved() -> None:
 ####
 
 
-def test_non_utf8_source_encoding_and_cookie_are_preserved(tmp_dir: Path) -> None:
-    path = tmp_dir / "latin1.py"
+def test_non_utf8_source_encoding_and_cookie_are_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "latin1.py"
     path.write_bytes(
         b"# -*- coding: latin-1 -*-\n"
         b"LABEL = 'caf\xe9'\n"
@@ -991,8 +1021,8 @@ def test_non_utf8_source_encoding_and_cookie_are_preserved(tmp_dir: Path) -> Non
 ####
 
 
-def test_cp1252_source_encoding_is_supported(tmp_dir: Path) -> None:
-    path = tmp_dir / "cp1252.py"
+def test_cp1252_source_encoding_is_supported(tmp_path: Path) -> None:
+    path = tmp_path / "cp1252.py"
     path.write_bytes(
         b"# coding: cp1252\n"
         b"LABEL = '\x80'\n"
@@ -1006,8 +1036,8 @@ def test_cp1252_source_encoding_is_supported(tmp_dir: Path) -> None:
 ####
 
 
-def test_utf8_bom_is_preserved(tmp_dir: Path) -> None:
-    path = tmp_dir / "bom.py"
+def test_utf8_bom_is_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "bom.py"
     path.write_bytes(b"\xef\xbb\xbfdef example():\n    pass\n")
 
     assert scope_markers.process_file(path, fix=True) == (True, None)
@@ -1016,8 +1046,8 @@ def test_utf8_bom_is_preserved(tmp_dir: Path) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows does not expose Unix executable bits")
-def test_atomic_fix_preserves_executable_bits(tmp_dir: Path) -> None:
-    path = tmp_dir / "tool.py"
+def test_atomic_fix_preserves_executable_bits(tmp_path: Path) -> None:
+    path = tmp_path / "tool.py"
     path.write_text("def main():\n    pass\n", encoding="utf-8")
     path.chmod(0o751)
 
@@ -1026,12 +1056,12 @@ def test_atomic_fix_preserves_executable_bits(tmp_dir: Path) -> None:
 ####
 
 
-def test_explicit_symlink_updates_target_without_replacing_link(tmp_dir: Path) -> None:
+def test_explicit_symlink_updates_target_without_replacing_link(tmp_path: Path) -> None:
     if not hasattr(os, "symlink"):
         pytest.skip("symlinks are unavailable")
     ####
-    target = tmp_dir / "target.py"
-    link = tmp_dir / "link.py"
+    target = tmp_path / "target.py"
+    link = tmp_path / "link.py"
     target.write_text("def example():\n    pass\n", encoding="utf-8")
     try:
         link.symlink_to(target)
@@ -1046,30 +1076,30 @@ def test_explicit_symlink_updates_target_without_replacing_link(tmp_dir: Path) -
 
 
 def test_recursive_discovery_skips_symlinked_files_and_generated_directories(
-        tmp_dir: Path,
+        tmp_path: Path,
 ) -> None:
-    source = tmp_dir / "source.py"
+    source = tmp_path / "source.py"
     source.write_text("pass\n", encoding="utf-8")
-    generated = tmp_dir / ".venv"
+    generated = tmp_path / ".venv"
     generated.mkdir()
     (generated / "ignored.py").write_text("pass\n", encoding="utf-8")
-    link = tmp_dir / "linked.py"
+    link = tmp_path / "linked.py"
     with suppress(OSError):
         link.symlink_to(source)
     ####
 
-    files, errors = scope_markers.discover_python_files([tmp_dir])
+    files, errors = scope_markers.discover_python_files([tmp_path])
 
     assert files == [source]
     assert errors == []
 ####
 
 
-def test_discovery_reports_missing_and_non_python_explicit_paths(tmp_dir: Path) -> None:
-    text = tmp_dir / "notes.txt"
+def test_discovery_reports_missing_and_non_python_explicit_paths(tmp_path: Path) -> None:
+    text = tmp_path / "notes.txt"
     text.write_text("notes", encoding="utf-8")
 
-    files, errors = scope_markers.discover_python_files([tmp_dir / "missing", text])
+    files, errors = scope_markers.discover_python_files([tmp_path / "missing", text])
 
     assert files == []
     assert len(errors) == 2
@@ -1078,9 +1108,9 @@ def test_discovery_reports_missing_and_non_python_explicit_paths(tmp_dir: Path) 
 ####
 
 
-def test_legacy_python_files_api_deduplicates_and_sorts(tmp_dir: Path) -> None:
-    first = tmp_dir / "a.py"
-    second = tmp_dir / "b.py"
+def test_legacy_python_files_api_deduplicates_and_sorts(tmp_path: Path) -> None:
+    first = tmp_path / "a.py"
+    second = tmp_path / "b.py"
     first.write_text("pass\n", encoding="utf-8")
     second.write_text("pass\n", encoding="utf-8")
 
@@ -1088,12 +1118,12 @@ def test_legacy_python_files_api_deduplicates_and_sorts(tmp_dir: Path) -> None:
 ####
 
 
-def test_discovery_deduplicates_relative_and_absolute_root_spellings(tmp_dir: Path) -> None:
-    source = tmp_dir / "module.py"
+def test_discovery_deduplicates_relative_and_absolute_root_spellings(tmp_path: Path) -> None:
+    source = tmp_path / "module.py"
     source.write_text("pass\n", encoding="utf-8")
-    relative_root = tmp_dir.relative_to(Path.cwd())
+    relative_root = tmp_path.relative_to(Path.cwd())
 
-    files, errors = scope_markers.discover_python_files([relative_root, tmp_dir])
+    files, errors = scope_markers.discover_python_files([relative_root, tmp_path])
 
     assert files == [relative_root / "module.py"]
     assert errors == []
@@ -1101,39 +1131,39 @@ def test_discovery_deduplicates_relative_and_absolute_root_spellings(tmp_dir: Pa
 
 
 def test_cli_does_not_emit_duplicate_diff_for_equivalent_roots(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    source = tmp_dir / "module.py"
+    source = tmp_path / "module.py"
     source.write_text("def example():\n    pass\n", encoding="utf-8")
-    relative_root = tmp_dir.relative_to(Path.cwd())
+    relative_root = tmp_path.relative_to(Path.cwd())
 
-    assert cli.main(["--diff", str(relative_root), str(tmp_dir)]) == 1
+    assert cli.main(["--diff", str(relative_root), str(tmp_path)]) == 1
     output = capsys.readouterr().out
 
     assert output.count("\n@@ ") == 1
 ####
 
 
-def test_discovery_prunes_generated_directories_recursively(tmp_dir: Path) -> None:
-    source = tmp_dir / "src" / "module.py"
+def test_discovery_prunes_generated_directories_recursively(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "module.py"
     source.parent.mkdir()
     source.write_text("pass\n", encoding="utf-8")
-    ignored = tmp_dir / "build" / "module.py"
+    ignored = tmp_path / "build" / "module.py"
     ignored.parent.mkdir()
     ignored.write_text("pass\n", encoding="utf-8")
 
-    files, errors = scope_markers.discover_python_files([tmp_dir])
+    files, errors = scope_markers.discover_python_files([tmp_path])
 
     assert files == [source]
     assert errors == []
 ####
 
 
-def test_discovery_skips_an_explicit_symlinked_directory_root(tmp_dir: Path) -> None:
-    target = tmp_dir / "target"
+def test_discovery_skips_an_explicit_symlinked_directory_root(tmp_path: Path) -> None:
+    target = tmp_path / "target"
     target.mkdir()
     (target / "module.py").write_text("pass\n", encoding="utf-8")
-    link = tmp_dir / "linked-root"
+    link = tmp_path / "linked-root"
     try:
         link.symlink_to(target, target_is_directory=True)
     except OSError:
@@ -1147,8 +1177,8 @@ def test_discovery_skips_an_explicit_symlinked_directory_root(tmp_dir: Path) -> 
 ####
 
 
-def test_discovery_skips_a_generated_directory_when_it_is_the_root(tmp_dir: Path) -> None:
-    generated = tmp_dir / "build"
+def test_discovery_skips_a_generated_directory_when_it_is_the_root(tmp_path: Path) -> None:
+    generated = tmp_path / "build"
     generated.mkdir()
     source = generated / "module.py"
     source.write_text("pass\n", encoding="utf-8")
@@ -1161,13 +1191,13 @@ def test_discovery_skips_a_generated_directory_when_it_is_the_root(tmp_dir: Path
 
 
 def test_discovery_treats_generated_directory_names_case_insensitively(
-        tmp_dir: Path,
+        tmp_path: Path,
 ) -> None:
-    generated = tmp_dir / "BUILD"
+    generated = tmp_path / "BUILD"
     generated.mkdir()
     (generated / "module.py").write_text("pass\n", encoding="utf-8")
 
-    files, errors = scope_markers.discover_python_files([tmp_dir])
+    files, errors = scope_markers.discover_python_files([tmp_path])
 
     assert files == []
     assert errors == []
@@ -1175,9 +1205,9 @@ def test_discovery_treats_generated_directory_names_case_insensitively(
 
 
 def test_discovery_skips_a_root_inside_a_generated_directory(
-        tmp_dir: Path, monkeypatch: pytest.MonkeyPatch
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    generated = tmp_dir / ".venv"
+    generated = tmp_path / ".venv"
     nested = generated / "package"
     nested.mkdir(parents=True)
     (nested / "module.py").write_text("pass\n", encoding="utf-8")
@@ -1190,8 +1220,8 @@ def test_discovery_skips_a_root_inside_a_generated_directory(
 ####
 
 
-def test_discovery_can_disable_default_directory_exclusions(tmp_dir: Path) -> None:
-    generated = tmp_dir / ".venv"
+def test_discovery_can_disable_default_directory_exclusions(tmp_path: Path) -> None:
+    generated = tmp_path / ".venv"
     generated.mkdir()
     source = generated / "module.py"
     source.write_text("pass\n", encoding="utf-8")
@@ -1205,22 +1235,22 @@ def test_discovery_can_disable_default_directory_exclusions(tmp_dir: Path) -> No
 ####
 
 
-def test_discovery_skips_egg_info_directories_by_default(tmp_dir: Path) -> None:
-    metadata = tmp_dir / "scope_markers.egg-info"
+def test_discovery_skips_egg_info_directories_by_default(tmp_path: Path) -> None:
+    metadata = tmp_path / "scope_markers.egg-info"
     metadata.mkdir()
     source = metadata / "generated.py"
     source.write_text("pass\n", encoding="utf-8")
 
-    files, errors = scope_markers.discover_python_files([tmp_dir])
+    files, errors = scope_markers.discover_python_files([tmp_path])
 
     assert files == []
     assert errors == []
 ####
 
 
-def test_discovery_supports_multiple_roots_and_exclude_patterns(tmp_dir: Path) -> None:
-    first = tmp_dir / "first"
-    second = tmp_dir / "second"
+def test_discovery_supports_multiple_roots_and_exclude_patterns(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
     ignored = second / "generated"
     first.mkdir()
     ignored.mkdir(parents=True)
@@ -1241,16 +1271,16 @@ def test_discovery_supports_multiple_roots_and_exclude_patterns(tmp_dir: Path) -
 
 
 def test_discovery_matches_absolute_include_and_exclude_patterns(
-        tmp_dir: Path, monkeypatch: pytest.MonkeyPatch
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    vendor = tmp_dir / "vendor"
-    other = tmp_dir / "other"
+    vendor = tmp_path / "vendor"
+    other = tmp_path / "other"
     vendor.mkdir()
     other.mkdir()
     (vendor / "ignored.py").write_text("pass\n", encoding="utf-8")
-    (tmp_dir / "kept.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "kept.py").write_text("pass\n", encoding="utf-8")
     (other / "included.bzl").write_text("def rule():\n    pass\n", encoding="utf-8")
-    monkeypatch.chdir(tmp_dir)
+    monkeypatch.chdir(tmp_path)
 
     discovered, errors = api.discover_python_files(
         [Path(".")],
@@ -1266,27 +1296,27 @@ def test_discovery_matches_absolute_include_and_exclude_patterns(
 ####
 
 
-def test_discovery_include_patterns_allow_python_compatible_extensions(tmp_dir: Path) -> None:
-    starlark = tmp_dir / "BUILD.bzl"
+def test_discovery_include_patterns_allow_python_compatible_extensions(tmp_path: Path) -> None:
+    starlark = tmp_path / "BUILD.bzl"
     starlark.write_text("def rule():\n    pass\n", encoding="utf-8")
 
-    files, errors = scope_markers.discover_python_files([tmp_dir])
+    files, errors = scope_markers.discover_python_files([tmp_path])
     assert files == []
     assert errors == []
 
     files, errors = scope_markers.discover_python_files(
-        [tmp_dir], include_patterns=("*.bzl",)
+        [tmp_path], include_patterns=("*.bzl",)
     )
 
     assert files == [starlark]
     assert errors == []
-    assert cli.main(["--include", "*.bzl", "--fix", "--quiet", str(tmp_dir)]) == 0
+    assert cli.main(["--include", "*.bzl", "--fix", "--quiet", str(tmp_path)]) == 0
     assert starlark.read_text(encoding="utf-8").endswith("####\n")
 ####
 
 
-def test_cli_mark_stubs_option_is_forwarded(tmp_dir: Path) -> None:
-    path = tmp_dir / "stub.py"
+def test_cli_mark_stubs_option_is_forwarded(tmp_path: Path) -> None:
+    path = tmp_path / "stub.py"
     path.write_text("def example() -> None: ...\n", encoding="utf-8")
 
     assert cli.main(["--mark-stubs", str(path)]) == 1
@@ -1295,9 +1325,9 @@ def test_cli_mark_stubs_option_is_forwarded(tmp_dir: Path) -> None:
 ####
 
 
-def test_cli_accepts_multiple_roots_and_exclude_patterns(tmp_dir: Path) -> None:
-    first = tmp_dir / "first.py"
-    second_root = tmp_dir / "second"
+def test_cli_accepts_multiple_roots_and_exclude_patterns(tmp_path: Path) -> None:
+    first = tmp_path / "first.py"
+    second_root = tmp_path / "second"
     second_root.mkdir()
     second = second_root / "second.py"
     ignored_root = second_root / "generated"
@@ -1317,38 +1347,38 @@ def test_cli_accepts_multiple_roots_and_exclude_patterns(tmp_dir: Path) -> None:
 ####
 
 
-def test_cli_default_excludes_can_be_disabled(tmp_dir: Path) -> None:
-    generated = tmp_dir / ".uv-cache"
+def test_cli_default_excludes_can_be_disabled(tmp_path: Path) -> None:
+    generated = tmp_path / ".uv-cache"
     generated.mkdir()
     source = generated / "module.py"
     source.write_text("def example():\n    pass\n", encoding="utf-8")
 
-    assert cli.main(["--fix", "--quiet", str(tmp_dir)]) == 0
+    assert cli.main(["--fix", "--quiet", str(tmp_path)]) == 0
     assert not source.read_text(encoding="utf-8").endswith("####\n")
 
     assert cli.main(
-        ["--no-default-excludes", "--fix", "--quiet", str(tmp_dir)]
+        ["--no-default-excludes", "--fix", "--quiet", str(tmp_path)]
     ) == 0
     assert source.read_text(encoding="utf-8").endswith("####\n")
 ####
 
 
-def test_cli_supports_repeated_exclude_patterns(tmp_dir: Path) -> None:
-    first = tmp_dir / "first.py"
-    second = tmp_dir / "second.generated.py"
+def test_cli_supports_repeated_exclude_patterns(tmp_path: Path) -> None:
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.generated.py"
     first.write_text("def example():\n    pass\n", encoding="utf-8")
     second.write_text("def example():\n    pass\n", encoding="utf-8")
 
     assert cli.main(
-        ["--exclude", "*.generated.py", "--exclude", "unused", str(tmp_dir)]
+        ["--exclude", "*.generated.py", "--exclude", "unused", str(tmp_path)]
     ) == 1
     assert not first.read_text(encoding="utf-8").endswith("####\n")
     assert not second.read_text(encoding="utf-8").endswith("####\n")
 ####
 
 
-def test_token_error_reports_line_and_column(tmp_dir: Path) -> None:
-    path = tmp_dir / "unfinished.py"
+def test_token_error_reports_line_and_column(tmp_path: Path) -> None:
+    path = tmp_path / "unfinished.py"
     path.write_text('value = "unterminated\n', encoding="utf-8")
 
     changed, error = scope_markers.process_file(path, fix=False)
@@ -1359,8 +1389,8 @@ def test_token_error_reports_line_and_column(tmp_dir: Path) -> None:
 ####
 
 
-def test_process_file_reports_missing_input_file(tmp_dir: Path) -> None:
-    path = tmp_dir / "missing.py"
+def test_process_file_reports_missing_input_file(tmp_path: Path) -> None:
+    path = tmp_path / "missing.py"
 
     changed, error = scope_markers.process_file(path, fix=False)
 
@@ -1390,7 +1420,7 @@ def test_programmatic_api_exposes_stable_formatter_functions() -> None:
 ####
 
 
-def test_programmatic_api_surface_is_complete_and_usable(tmp_dir: Path) -> None:
+def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None:
     assert api.__all__ == (
         "FileInspection",
         "ScopeBoundary",
@@ -1404,7 +1434,7 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_dir: Path) -> None:
     )
     assert api.__version__ == installed_version("scope-markers")
 
-    path = tmp_dir / "example.py"
+    path = tmp_path / "example.py"
     path.write_text("def example():\n    pass\n", encoding="utf-8")
     inspection = api.inspect_file(path)
 
@@ -1416,10 +1446,10 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_dir: Path) -> None:
     assert api.process_file(path, fix=True) == (True, None)
     assert api.process_file(path, fix=False) == (False, None)
 
-    starlark = tmp_dir / "BUILD.bzl"
+    starlark = tmp_path / "BUILD.bzl"
     starlark.write_text("def rule():\n    pass\n", encoding="utf-8")
     discovered, errors = api.discover_python_files(
-        [tmp_dir], include_patterns=("*.bzl",), exclude_patterns=("example.py",)
+        [tmp_path], include_patterns=("*.bzl",), exclude_patterns=("example.py",)
     )
 
     assert discovered == [starlark]
@@ -1449,8 +1479,8 @@ def test_console_script_is_registered_and_usable() -> None:
 ####
 
 
-def test_check_fix_and_diff_exit_codes(tmp_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    path = tmp_dir / "example.py"
+def test_check_fix_and_diff_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / "example.py"
     path.write_text("def example():\n    pass\n", encoding="utf-8")
 
     assert cli.main([str(path)]) == 1
@@ -1464,217 +1494,10 @@ def test_check_fix_and_diff_exit_codes(tmp_dir: Path, capsys: pytest.CaptureFixt
 ####
 
 
-def test_cli_diff_marks_a_missing_final_newline(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    path = tmp_dir / "no-final-newline.py"
-    path.write_bytes(b"def example():\n    pass")
-
-    assert cli.main(["--diff", str(path)]) == 1
-    output = capsys.readouterr().out
-
-    assert "-    pass\n\\ No newline at end of file\n+    pass\n" in output
-    assert "-    pass+    pass" not in output
-####
-
-
-def test_cli_diff_marks_missing_newline_on_unchanged_context_line(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
-) -> None:
-    path = tmp_dir / "context-no-final-newline.py"
-    path.write_bytes(b"if x:\n    pass\nx = 1")
-
-    assert cli.main(["--diff", str(path)]) == 1
-    output = capsys.readouterr().out
-
-    assert " x = 1\n\\ No newline at end of file\n" in output
-####
-
-
-def test_cli_diff_rejects_bare_carriage_return_lines(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    path = tmp_dir / "bare-cr.py"
-    path.write_bytes(b"def example():\r    pass\r")
-
-    assert cli.main(["--diff", str(path)]) == 2
-    captured = capsys.readouterr()
-
-    assert captured.out == ""
-    assert "bare-CR line endings" in captured.err
-####
-
-
-def test_cli_diff_preserves_crlf_records_in_mixed_line_endings(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    path = tmp_dir / "mixed-newlines.py"
-    path.write_bytes(b"def first():\r\n    pass\r\ndef second():\n    pass\n")
-
-    assert cli.main(["--diff", str(path)]) == 1
-    output = capsys.readouterr().out
-
-    assert " def first():\r\n" in output
-    assert "     pass\r\n" in output
-    assert "+####\r\n" in output
-    assert "+####\n" in output
-    assert "-    pass+    pass" not in output
-    assert output.count("+####") == 2
-####
-
-
-def test_cli_diff_for_crlf_file_is_acceptable_to_git(
-        tmp_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-) -> None:
-    git = shutil.which("git")
-    if git is None:
-        pytest.skip("git is unavailable")
-    ####
-
-    repo = tmp_dir / "repo"
-    repo.mkdir()
-    path = repo / "example.py"
-    path.write_bytes(b"def example():\r\n    pass\r\n")
-    subprocess.run([git, "init", "--quiet"], cwd=repo, check=True)
-    monkeypatch.chdir(repo)
-
-    assert cli.main(["--diff", str(path)]) == 1
-    patch = tmp_dir / "change.patch"
-    patch.write_text(capsys.readouterr().out, encoding="utf-8", newline="")
-
-    checked = subprocess.run(
-        [git, "apply", "--check", str(patch)],
-        cwd=repo,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert checked.returncode == 0, checked.stderr
-####
-
-
-@pytest.mark.parametrize(
-    ("filename", "data"),
-    (
-        ("utf8.py", b"# coding: utf-8\ndef example():\n    value = 'h\xc3\xa9llo'\n"),
-        ("cp1252.py", b"# coding: cp1252\ndef example():\n    value = 'h\xe9llo'\n"),
-        ("bom.py", b"\xef\xbb\xbfdef example():\n    pass\n"),
-    ),
-)
-def test_cli_diff_preserves_source_encoding_for_git(
-        tmp_dir: Path,
-        filename: str,
-        data: bytes,
-) -> None:
-    git = shutil.which("git")
-    if git is None:
-        pytest.skip("git is unavailable")
-    ####
-
-    repo = tmp_dir / "repo"
-    repo.mkdir()
-    path = repo / filename
-    path.write_bytes(data)
-    subprocess.run([git, "init", "--quiet"], cwd=repo, check=True)
-
-    completed = subprocess.run(
-        [sys.executable, "-m", "scope_markers", "--diff", str(path)],
-        cwd=repo,
-        check=False,
-        capture_output=True,
-    )
-    assert completed.returncode == 1
-    patch = tmp_dir / "change.patch"
-    patch.write_bytes(completed.stdout)
-
-    checked = subprocess.run(
-        [git, "apply", "--check", str(patch)],
-        cwd=repo,
-        check=False,
-        capture_output=True,
-    )
-
-    assert checked.returncode == 0, checked.stderr.decode(errors="replace")
-####
-
-
-def test_cli_diff_encodes_unicode_path_metadata_separately(
-        tmp_dir: Path,
-) -> None:
-    git = shutil.which("git")
-    if git is None:
-        pytest.skip("git is unavailable")
-    ####
-
-    repo = tmp_dir / "repo"
-    source_dir = repo / "emoji-😀"
-    source_dir.mkdir(parents=True)
-    path = source_dir / "example.py"
-    path.write_bytes(b"# coding: cp1252\ndef example():\n    value = 'h\xe9llo'\n")
-    subprocess.run([git, "init", "--quiet"], cwd=repo, check=True)
-
-    completed = subprocess.run(
-        [sys.executable, "-m", "scope_markers", "--diff", str(path)],
-        cwd=repo,
-        check=False,
-        capture_output=True,
-    )
-    patch = tmp_dir / "change.patch"
-    patch.write_bytes(completed.stdout)
-
-    checked = subprocess.run(
-        [git, "apply", "--check", str(patch)],
-        cwd=repo,
-        check=False,
-        capture_output=True,
-    )
-
-    assert completed.returncode == 1
-    assert checked.returncode == 0, checked.stderr.decode(errors="replace")
-####
-
-
-def test_cli_diff_subprocess_preserves_crlf_bytes(tmp_dir: Path) -> None:
-    path = tmp_dir / "example.py"
-    path.write_bytes(b"def example():\r\n    pass\r\n")
-
-    completed = subprocess.run(
-        [sys.executable, "-m", "scope_markers", "--diff", path.name],
-        cwd=tmp_dir,
-        check=False,
-        capture_output=True,
-    )
-
-    assert completed.returncode == 1
-    assert b"\r\r\n" not in completed.stdout
-    assert b" def example():\r\n" in completed.stdout
-    assert b"+####\r\n" in completed.stdout
-####
-
-
-def test_cli_diff_marks_missing_final_newline_in_mixed_line_endings(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Mixed physical endings must remain separate in a patch."""
-    path = tmp_dir / "mixed-no-final-newline.py"
-    path.write_bytes(b"def first():\r\n    pass\r\ndef second():\n    pass")
-
-    assert cli.main(["--diff", str(path)]) == 1
-    output = capsys.readouterr().out
-
-    assert " def first():\r\n" in output
-    assert "-    pass+    pass" not in output
-    assert "-    pass\n\\ No newline at end of file\n+    pass\n" in output
-####
-
-
 def test_cli_fix_reports_fixed_files_unless_quiet(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    path = tmp_dir / "example.py"
+    path = tmp_path / "example.py"
     path.write_text("def example():\n    pass\n", encoding="utf-8")
 
     assert cli.main(["--fix", str(path)]) == 0
@@ -1687,10 +1510,10 @@ def test_cli_fix_reports_fixed_files_unless_quiet(
 
 
 def test_cli_defaults_to_the_current_directory(
-        tmp_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (tmp_dir / "example.py").write_text("def example():\n    pass\n", encoding="utf-8")
-    monkeypatch.chdir(tmp_dir)
+    (tmp_path / "example.py").write_text("def example():\n    pass\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
     assert cli.main([]) == 1
     assert "needs markers: example.py" in capsys.readouterr().out
@@ -1772,9 +1595,9 @@ def test_cli_rejects_options_missing_values(
 
 
 def test_cli_verbose_reports_status_without_polluting_diff(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    path = tmp_dir / "example.py"
+    path = tmp_path / "example.py"
     path.write_text("def example():\n    pass\n", encoding="utf-8")
 
     assert cli.main(["--diff", "--verbose", str(path)]) == 1
@@ -1788,29 +1611,29 @@ def test_cli_verbose_reports_status_without_polluting_diff(
 ####
 
 
-def test_cli_fail_fast_stops_after_the_first_changed_file(tmp_dir: Path) -> None:
-    first = tmp_dir / "a.py"
-    second = tmp_dir / "b.py"
+def test_cli_fail_fast_stops_after_the_first_changed_file(tmp_path: Path) -> None:
+    first = tmp_path / "a.py"
+    second = tmp_path / "b.py"
     for path in (first, second):
         path.write_text("def example():\n    pass\n", encoding="utf-8")
     ####
 
-    assert cli.main(["--fail-fast", "--fix", "--quiet", str(tmp_dir)]) == 0
+    assert cli.main(["--fail-fast", "--fix", "--quiet", str(tmp_path)]) == 0
     assert first.read_text(encoding="utf-8").endswith("####\n")
     assert not second.read_text(encoding="utf-8").endswith("####\n")
 ####
 
 
 def test_cli_fail_fast_check_reports_only_the_first_change(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    first = tmp_dir / "a.py"
-    second = tmp_dir / "b.py"
+    first = tmp_path / "a.py"
+    second = tmp_path / "b.py"
     for path in (first, second):
         path.write_text("def example():\n    pass\n", encoding="utf-8")
     ####
 
-    assert cli.main(["--fail-fast", "--verbose", str(tmp_dir)]) == 1
+    assert cli.main(["--fail-fast", "--verbose", str(tmp_path)]) == 1
     output = capsys.readouterr().out
 
     assert f"needs markers: {first}" in output
@@ -1819,14 +1642,14 @@ def test_cli_fail_fast_check_reports_only_the_first_change(
 
 
 def test_cli_fail_fast_stops_after_the_first_processing_error(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    broken = tmp_dir / "a_broken.py"
-    valid = tmp_dir / "b_valid.py"
+    broken = tmp_path / "a_broken.py"
+    valid = tmp_path / "b_valid.py"
     broken.write_text("def broken(:\n", encoding="utf-8")
     valid.write_text("def valid():\n    pass\n", encoding="utf-8")
 
-    assert cli.main(["--fail-fast", "--verbose", str(tmp_dir)]) == 2
+    assert cli.main(["--fail-fast", "--verbose", str(tmp_path)]) == 2
     captured = capsys.readouterr()
 
     assert str(broken) in captured.err
@@ -1835,10 +1658,10 @@ def test_cli_fail_fast_stops_after_the_first_processing_error(
 
 
 def test_cli_fail_fast_reports_discovery_errors_before_fixing_files(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    missing = tmp_dir / "missing.py"
-    valid = tmp_dir / "valid.py"
+    missing = tmp_path / "missing.py"
+    valid = tmp_path / "valid.py"
     original = "def valid():\n    pass\n"
     valid.write_text(original, encoding="utf-8")
 
@@ -1850,9 +1673,9 @@ def test_cli_fail_fast_reports_discovery_errors_before_fixing_files(
 
 
 def test_cli_fix_summary_reports_actual_changes_and_idempotency(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    path = tmp_dir / "example.py"
+    path = tmp_path / "example.py"
     path.write_text("def example():\n    pass\n", encoding="utf-8")
 
     assert cli.main(["--fix", str(path)]) == 0
@@ -1866,17 +1689,17 @@ def test_cli_fix_summary_reports_actual_changes_and_idempotency(
 
 
 def test_cli_reports_missing_path_as_error(
-        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    missing = tmp_dir / "missing"
+    missing = tmp_path / "missing"
 
     assert cli.main([str(missing)]) == 2
     assert "path does not exist" in capsys.readouterr().err
 ####
 
 
-def test_syntax_error_reports_line_and_column(tmp_dir: Path) -> None:
-    path = tmp_dir / "broken.py"
+def test_syntax_error_reports_line_and_column(tmp_path: Path) -> None:
+    path = tmp_path / "broken.py"
     path.write_text("def broken(:\n", encoding="utf-8")
 
     changed, error = scope_markers.process_file(path, fix=False)
@@ -1895,8 +1718,8 @@ def test_formatter_is_idempotent_on_its_own_source() -> None:
 ####
 
 
-def test_script_runs_as_a_standalone_cli(tmp_dir: Path) -> None:
-    path = tmp_dir / "example.py"
+def test_script_runs_as_a_standalone_cli(tmp_path: Path) -> None:
+    path = tmp_path / "example.py"
     path.write_text("def example():\n    pass\n", encoding="utf-8")
 
     completed = subprocess.run(

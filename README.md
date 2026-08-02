@@ -71,14 +71,20 @@ scope-markers --verbose src tests       # report every file's status
 scope-markers --fail-fast .             # stop at the first needed fix/error
 ```
 
-`--quiet` and `--verbose` are mutually exclusive. In `--diff --verbose` mode,
-the patch remains clean on standard output and per-file status is reported on
+`--quiet` and `--verbose` are mutually exclusive. In `--diff` mode, standard
+output is reserved for patch bytes; status and diagnostic messages go to
+standard error. This keeps both changed and already-clean runs safe to redirect
+to a patch file. `--diff --verbose` additionally reports each file's status on
 standard error.
 
 Diff output preserves LF and CRLF records and includes explicit markers for a
 missing final newline. `--diff` rejects changed files with bare-CR line endings
 because unified-diff tools cannot apply those physical boundaries; use `--fix`
-or convert such files to LF or CRLF first.
+or convert such files to LF or CRLF first. Patch labels are normalized relative
+to the enclosing Git worktree (or a safe shared root outside Git), and unusual
+names such as spaces, tabs, newlines, quotes, and non-UTF-8 path bytes are
+quoted independently from the source-file encoding so Git can consume the
+patch.
 
 The default check scans every discovered file so CI can report all required
 changes. Use `--fail-fast` for a quick local check that stops after the first
@@ -319,11 +325,11 @@ repos:
 ```bash
 python -m pip install -e ".[dev]"
 pytest -q
-ruff check .
+ruff check src scripts tests
 flake8 src scripts tests
-pyright
+python scripts/check_pyright.py
 python scripts/check_build.py
-scope-markers .
+scope-markers src scripts tests
 ```
 
 For ordinary Python formatting, run Black before applying the project-specific
@@ -338,15 +344,15 @@ The complete validation roles are:
 
 | Tool                | Command                         | Purpose                                                                   |
 |---------------------|---------------------------------|---------------------------------------------------------------------------|
-| Ruff                | `ruff check .`                  | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
+| Ruff                | `ruff check src scripts tests`  | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
 | Diff contract       | `python scripts/check_diff.py` | Verify emitted patches with Git across newline and encoding cases       |
 | Black               | `black src tests scripts`       | Ordinary Python formatting before markers                                 |
 | Black compatibility | `python scripts/check_black.py` | Black format/check smoke test with standalone markers removed             |
 | Flake8              | `flake8 src scripts tests`      | Compatibility lint pass using `.flake8`                                   |
-| Pyright             | `pyright`                       | Strict type checking for `src` and `scripts`                              |
+| Pyright             | `python scripts/check_pyright.py` | Strict type checking for `src`, `scripts`, and `tests`                   |
 | Pytest              | `pytest -q`                     | Regression test suite                                                     |
 | Build               | `python scripts/check_build.py` | Wheel packaging check                                                     |
-| Scope markers       | `scope-markers .`               | Project-specific marker check                                             |
+| Scope markers       | `scope-markers src scripts tests` | Project-specific marker check                                           |
 
 Ruff's annotation rules require parameters and return values to be annotated for
 new functions, methods, and test helpers. Pyright then type-checks the package
