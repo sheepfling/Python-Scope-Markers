@@ -14,7 +14,6 @@ import pytest
 import scope_markers
 from scripts import ci
 
-
 def test_nested_scopes_are_closed_inside_out() -> None:
     source = (
         "class Example:\n"
@@ -141,17 +140,17 @@ def test_one_line_suites_and_semicolon_lists_are_supported() -> None:
         ("while ready: break\n", "while ready: break\n####\n"),
         ("with resource: close(resource)\n", "with resource: close(resource)\n####\n"),
         (
-            "try: pass\nexcept Exception: recover()\n",
-            "try: pass\nexcept Exception: recover()\n####\n",
+                "try: pass\nexcept Exception: recover()\n",
+                "try: pass\nexcept Exception: recover()\n####\n",
         ),
         (
-            "async def worker(): return 1\n",
-            "async def worker(): return 1\n####\n",
+                "async def worker(): return 1\n",
+                "async def worker(): return 1\n####\n",
         ),
     ],
 )
 def test_each_one_line_compound_statement_gets_a_boundary(
-    source: str, expected: str
+        source: str, expected: str
 ) -> None:
     assert scope_markers.format_source(source) == expected
 ####
@@ -278,6 +277,7 @@ def test_ci_main_stops_and_returns_the_first_failure(monkeypatch: pytest.MonkeyP
     def run(command: tuple[str, ...]) -> int:
         called.append(command)
         return 7 if command == commands[1] else 0
+
     ####
 
     monkeypatch.setattr(ci, "ci_commands", lambda: commands)
@@ -682,7 +682,7 @@ def test_explicit_symlink_updates_target_without_replacing_link(tmp_path: Path) 
 
 
 def test_recursive_discovery_skips_symlinked_files_and_generated_directories(
-    tmp_path: Path,
+        tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.py"
     source.write_text("pass\n", encoding="utf-8")
@@ -739,6 +739,71 @@ def test_discovery_prunes_generated_directories_recursively(tmp_path: Path) -> N
 ####
 
 
+def test_discovery_skips_a_generated_directory_when_it_is_the_root(tmp_path: Path) -> None:
+    generated = tmp_path / "build"
+    generated.mkdir()
+    source = generated / "module.py"
+    source.write_text("pass\n", encoding="utf-8")
+
+    files, errors = scope_markers.discover_python_files([generated])
+
+    assert files == []
+    assert errors == []
+####
+
+
+def test_discovery_treats_generated_directory_names_case_insensitively(
+        tmp_path: Path,
+) -> None:
+    generated = tmp_path / "BUILD"
+    generated.mkdir()
+    (generated / "module.py").write_text("pass\n", encoding="utf-8")
+
+    files, errors = scope_markers.discover_python_files([tmp_path])
+
+    assert files == []
+    assert errors == []
+####
+
+
+def test_discovery_skips_a_root_inside_a_generated_directory(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generated = tmp_path / ".venv"
+    nested = generated / "package"
+    nested.mkdir(parents=True)
+    (nested / "module.py").write_text("pass\n", encoding="utf-8")
+    monkeypatch.chdir(nested)
+
+    files, errors = scope_markers.discover_python_files([Path(".")])
+
+    assert files == []
+    assert errors == []
+####
+
+
+def test_discovery_supports_multiple_roots_and_exclude_patterns(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    ignored = second / "generated"
+    first.mkdir()
+    ignored.mkdir(parents=True)
+    first_source = first / "first.py"
+    second_source = second / "second.py"
+    ignored_source = ignored / "ignored.py"
+    for path in (first_source, second_source, ignored_source):
+        path.write_text("pass\n", encoding="utf-8")
+    ####
+
+    files, errors = scope_markers.discover_python_files(
+        [first, second], exclude_patterns=("generated",)
+    )
+
+    assert files == [first_source, second_source]
+    assert errors == []
+####
+
+
 def test_cli_mark_stubs_option_is_forwarded(tmp_path: Path) -> None:
     path = tmp_path / "stub.py"
     path.write_text("def example() -> None: ...\n", encoding="utf-8")
@@ -746,6 +811,42 @@ def test_cli_mark_stubs_option_is_forwarded(tmp_path: Path) -> None:
     assert scope_markers.main(["--mark-stubs", str(path)]) == 1
     assert scope_markers.main(["--mark-stubs", "--fix", "--quiet", str(path)]) == 0
     assert path.read_text(encoding="utf-8").endswith("####\n")
+####
+
+
+def test_cli_accepts_multiple_roots_and_exclude_patterns(tmp_path: Path) -> None:
+    first = tmp_path / "first.py"
+    second_root = tmp_path / "second"
+    second_root.mkdir()
+    second = second_root / "second.py"
+    ignored_root = second_root / "generated"
+    ignored_root.mkdir()
+    ignored = ignored_root / "ignored.py"
+    for path in (first, second, ignored):
+        path.write_text("def example():\n    pass\n", encoding="utf-8")
+    ####
+
+    assert scope_markers.main(["--exclude", "generated", str(first), str(second_root)]) == 1
+    assert scope_markers.main(
+        ["--exclude", "generated", "--fix", "--quiet", str(first), str(second_root)]
+    ) == 0
+    assert first.read_text(encoding="utf-8").endswith("####\n")
+    assert second.read_text(encoding="utf-8").endswith("####\n")
+    assert not ignored.read_text(encoding="utf-8").endswith("####\n")
+####
+
+
+def test_cli_supports_repeated_exclude_patterns(tmp_path: Path) -> None:
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.generated.py"
+    first.write_text("def example():\n    pass\n", encoding="utf-8")
+    second.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert scope_markers.main(
+        ["--exclude", "*.generated.py", "--exclude", "unused", str(tmp_path)]
+    ) == 1
+    assert not first.read_text(encoding="utf-8").endswith("####\n")
+    assert not second.read_text(encoding="utf-8").endswith("####\n")
 ####
 
 
@@ -770,7 +871,7 @@ def test_console_script_is_registered_and_usable() -> None:
     registered = {
         entry.name: entry.value for entry in entry_points(group="console_scripts")
     }
-    assert registered["scope-markers"] == "scope_markers:main"
+    assert registered["scope-markers"] == "scope_markers.cli:main"
 
     completed = subprocess.run(
         ["scope-markers", "--version"],
@@ -789,6 +890,7 @@ def test_check_fix_and_diff_exit_codes(tmp_path: Path, capsys: pytest.CaptureFix
     path.write_text("def example():\n    pass\n", encoding="utf-8")
 
     assert scope_markers.main([str(path)]) == 1
+    assert "needs markers:" in capsys.readouterr().out
     assert scope_markers.main(["--diff", str(path)]) == 1
     diff_output = capsys.readouterr().out
     assert "@@" in diff_output
@@ -798,8 +900,66 @@ def test_check_fix_and_diff_exit_codes(tmp_path: Path, capsys: pytest.CaptureFix
 ####
 
 
+def test_cli_fix_reports_fixed_files_unless_quiet(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "example.py"
+    path.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert scope_markers.main(["--fix", str(path)]) == 0
+    assert f"fixed: {path}" in capsys.readouterr().out
+
+    path.write_text("def example():\n    pass\n", encoding="utf-8")
+    assert scope_markers.main(["--fix", "--quiet", str(path)]) == 0
+    assert capsys.readouterr().out == ""
+####
+
+
+def test_cli_defaults_to_the_current_directory(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "example.py").write_text("def example():\n    pass\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert scope_markers.main([]) == 1
+    assert "needs markers: example.py" in capsys.readouterr().out
+####
+
+
+def test_cli_version_option_exits_with_version(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exception:
+        scope_markers.main(["--version"])
+
+    assert exception.value.code == 0
+    assert capsys.readouterr().out.strip() == f"scope-markers {scope_markers.__version__}"
+####
+
+
+def test_cli_help_option_lists_supported_options(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exception:
+        scope_markers.main(["--help"])
+
+    output = capsys.readouterr().out
+    assert exception.value.code == 0
+    for option in ("--fix", "--diff", "--mark-stubs", "--quiet", "--exclude", "--version"):
+        assert option in output
+####
+
+
+def test_cli_rejects_conflicting_fix_and_diff_options() -> None:
+    with pytest.raises(SystemExit) as exception:
+        scope_markers.main(["--fix", "--diff"])
+
+    assert exception.value.code == 2
+####
+
+
 def test_cli_reports_missing_path_as_error(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     missing = tmp_path / "missing"
 

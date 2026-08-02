@@ -7,6 +7,16 @@ The runtime formatter is packaged under `src/scope_markers/`. The surrounding
 project files make it testable, installable, and suitable for CI without adding
 runtime dependencies.
 
+The package is intentionally layered:
+
+- `scope_markers.__init__` exposes the stable Python API;
+- `scope_markers._implementation` contains formatting, discovery, and file operations;
+- `scope_markers.cli` owns command-line parsing and command behavior;
+- `scope_markers.__main__` provides `python -m scope_markers`.
+
+New CLI options or commands should be added to `cli.py`; new formatter behavior
+belongs in `_implementation.py`. Keep `__init__.py` limited to public exports.
+
 ## Quick use
 
 Check files without changing them:
@@ -29,7 +39,20 @@ scope-markers --diff src tests scripts
 
 With no paths, the current directory is scanned recursively. Common VCS,
 virtual-environment, cache, dependency, and build directories are pruned.
-Explicitly naming a `.py` file bypasses directory pruning.
+Supplying multiple files or directories is supported. A supplied root that is
+itself, or is inside, a generated directory such as `build`, `.venv`, or
+`node_modules` is skipped. Explicitly naming a `.py` file bypasses directory
+pruning and custom excludes.
+
+Add repeatable glob exclusions for project-specific generated or vendor trees:
+
+```bash
+scope-markers --exclude generated --exclude "*.generated.py" src tests
+```
+
+Exclusion patterns match a path's basename, its path relative to the supplied
+root, or its normalized path. They apply to recursively discovered files and
+directories; explicit `.py` paths remain explicit inputs.
 
 Exit statuses are stable:
 
@@ -242,15 +265,19 @@ scope-markers --fix src tests scripts
 
 The complete validation roles are:
 
-| Tool | Command | Purpose |
-| --- | --- | --- |
-| Ruff | `ruff check .` | Fast linting and autofix-compatible diagnostics |
-| Black | `black src tests scripts` | Ordinary Python formatting before markers |
-| Flake8 | `flake8 src scripts tests` | Compatibility lint pass using `.flake8` |
-| Pyright | `pyright` | Strict type checking for `src` and `scripts` |
-| Pytest | `pytest -q` | Regression test suite |
-| Build | `python -m build --wheel` | Wheel packaging check |
-| Scope markers | `scope-markers .` | Project-specific marker check |
+| Tool          | Command                    | Purpose                                                                   |
+|---------------|----------------------------|---------------------------------------------------------------------------|
+| Ruff          | `ruff check .`             | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
+| Black         | `black src tests scripts`  | Ordinary Python formatting before markers                                 |
+| Flake8        | `flake8 src scripts tests` | Compatibility lint pass using `.flake8`                                   |
+| Pyright       | `pyright`                  | Strict type checking for `src` and `scripts`                              |
+| Pytest        | `pytest -q`                | Regression test suite                                                     |
+| Build         | `python -m build --wheel`  | Wheel packaging check                                                     |
+| Scope markers | `scope-markers .`          | Project-specific marker check                                             |
+
+Ruff's annotation rules require parameters and return values to be annotated for
+new functions, methods, and test helpers. Pyright then type-checks the package
+and CI scripts in strict mode; tests are covered by Ruff and the runtime suite.
 
 Black is intentionally not run as a post-marker `--check`: Black and Ruff both
 normalize the whitespace and multiline strings around the required `####`

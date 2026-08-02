@@ -4,7 +4,6 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-
 @pytest.fixture
 def tmp_path() -> Iterator[Path]:
     """Provide test directories inside the repository instead of global temp."""
