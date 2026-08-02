@@ -135,6 +135,12 @@ def _build_parser() -> argparse.ArgumentParser:
 ####
 
 
+def _report_errors(errors: Sequence[str]) -> None:
+    """Write collected diagnostics to standard error."""
+    print("\n".join(errors), file=sys.stderr)
+####
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     paths = [Path(path) for path in args.paths]
@@ -154,6 +160,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         exclude_patterns=exclude_patterns,
         use_default_excludes=use_default_excludes,
     )
+    if errors and fail_fast:
+        _report_errors(errors)
+        return 2
+    ####
     changed: list[Path] = []
     processed_files = 0
     for path in files:
@@ -198,15 +208,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     ####
 
     if errors:
-        print("\n".join(errors), file=sys.stderr)
+        _report_errors(errors)
         return 2
     ####
     if changed and not fix:
         return 1
     ####
     if not quiet:
-        action = "fixed" if fix else "clean"
-        count = processed_files if fail_fast else len(files)
+        if fix:
+            action = "fixed" if changed else "already clean"
+            count = len(changed) if changed else processed_files
+        else:
+            action = "clean"
+            count = processed_files if fail_fast else len(files)
+        ####
         print(f"scope markers {action} ({count} files)")
     ####
     return 0

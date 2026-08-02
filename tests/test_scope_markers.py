@@ -1288,6 +1288,22 @@ def test_cli_diff_normalizes_mixed_line_endings(
 ####
 
 
+def test_cli_diff_marks_missing_final_newline_in_mixed_line_endings(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mixed physical endings must remain separate in a patch."""
+    path = tmp_dir / "mixed-no-final-newline.py"
+    path.write_bytes(b"def first():\r\n    pass\rdef second():\n    pass")
+
+    assert cli.main(["--diff", str(path)]) == 1
+    output = capsys.readouterr().out
+
+    assert "\r" not in output
+    assert "-    pass+    pass" not in output
+    assert "-    pass\n\\ No newline at end of file\n+    pass\n" in output
+####
+
+
 def test_cli_fix_reports_fixed_files_unless_quiet(
         tmp_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1436,6 +1452,37 @@ def test_cli_fail_fast_stops_after_the_first_processing_error(
 
     assert str(broken) in captured.err
     assert str(valid) not in captured.out
+####
+
+
+def test_cli_fail_fast_reports_discovery_errors_before_fixing_files(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing = tmp_dir / "missing.py"
+    valid = tmp_dir / "valid.py"
+    original = "def valid():\n    pass\n"
+    valid.write_text(original, encoding="utf-8")
+
+    assert cli.main(["--fail-fast", "--fix", str(missing), str(valid)]) == 2
+
+    assert valid.read_text(encoding="utf-8") == original
+    assert str(missing) in capsys.readouterr().err
+####
+
+
+def test_cli_fix_summary_reports_actual_changes_and_idempotency(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_dir / "example.py"
+    path.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert cli.main(["--fix", str(path)]) == 0
+    first_output = capsys.readouterr().out
+    assert "scope markers fixed (1 files)" in first_output
+
+    assert cli.main(["--fix", str(path)]) == 0
+    second_output = capsys.readouterr().out
+    assert "scope markers already clean (1 files)" in second_output
 ####
 
 
