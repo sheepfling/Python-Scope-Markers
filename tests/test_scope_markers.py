@@ -250,6 +250,7 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
     assert ci.ci_commands("python311") == (
         ("python311", "-m", "pytest", "-q"),
         ("python311", "-m", "ruff", "check", "."),
+        ("python311", "-m", "ruff", "format", "--check", "."),
         ("python311", "-m", "pyright"),
         ("python311", "-m", "build", "--wheel"),
         ("scope-markers", "scripts"),
@@ -586,7 +587,7 @@ def test_inconsistent_tab_and_space_indentation_is_reported(tmp_path: Path) -> N
 ####
 
 
-def test_formfeed_indentation_is_preserved() -> None:
+def test_form_feed_indentation_is_preserved() -> None:
     source = "if ready:\n\f    pass\n"
 
     assert scope_markers.format_source(source) == "if ready:\n\f    pass\n####\n"
@@ -691,7 +692,7 @@ def test_recursive_discovery_skips_symlinked_files_and_generated_directories(
     try:
         link.symlink_to(source)
     except OSError:
-        link = Path("missing")
+        pass
     ####
 
     files, errors = scope_markers.discover_python_files([tmp_path])

@@ -6,7 +6,7 @@
 - Adds `--diff`, `--quiet`, `--version`, and `--mark-stubs`.
 - Correctly handles bare-CR and locally mixed newline files.
 - Uses physical Python line boundaries rather than broad Unicode `splitlines()`.
-- Handles tabs and leading formfeeds using Python indentation expansion.
+- Handles tabs and leading form-feed characters using Python indentation expansion.
 - Preserves BOMs, declared source encodings, and executable permission bits.
 - Uses atomic replacement and preserves explicit symlinks.
 - Skips recursively discovered symlink targets and common generated trees.

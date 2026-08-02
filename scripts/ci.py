@@ -15,6 +15,7 @@ def ci_commands(python: str = sys.executable) -> tuple[tuple[str, ...], ...]:
     return (
         (python, "-m", "pytest", "-q"),
         (python, "-m", "ruff", "check", "."),
+        (python, "-m", "ruff", "format", "--check", "."),
         (python, "-m", "pyright"),
         (python, "-m", "build", "--wheel"),
         ("scope-markers", "scripts"),
@@ -34,9 +35,9 @@ def main() -> int:
     """Run each CI command in order, stopping at the first failure."""
     for command in ci_commands():
         print(f"$ {' '.join(command)}")
-        returncode = run_command(command)
-        if returncode:
-            return returncode
+        return_code = run_command(command)
+        if return_code:
+            return return_code
         ####
     ####
     return 0

@@ -108,7 +108,7 @@ The formatter:
   strings or inline comments;
 - preserves UTF-8 BOMs and PEP 263 source encodings;
 - preserves LF, CRLF, bare-CR, and locally mixed newline conventions;
-- handles spaces, tabs, and leading formfeeds using Python's indentation rules;
+- handles spaces, tabs, and leading form-feed characters using Python's indentation rules;
 - validates that the formatted source has the same AST shape;
 - writes regular files atomically and preserves executable permission bits;
 - leaves explicitly supplied symlinks intact while updating their target;
@@ -161,9 +161,10 @@ repos:
 ```bash
 python -m pip install -e ".[dev]"
 pytest -q
-python -m build --wheel
 ruff check .
+ruff format --check .
 pyright
+python -m build --wheel
 scope-markers .
 ```
 
@@ -177,7 +178,7 @@ GitHub Actions runs that sequence on Python 3.11, 3.12, 3.13, and 3.14.
 
 The regression suite covers every compound-statement family, one-line suites,
 branch chains, nested same-line endings, generic definitions, marker-like text,
-multiline strings, Unicode line separators, tabs, formfeeds, all conventional
-newline forms, mixed newlines, BOMs, legacy encodings, executable files,
-symlinks, recursive discovery, diffs, exit statuses, syntax diagnostics, and
-self-idempotence.
+multiline strings, Unicode line separators, tabs, and leading form-feed
+characters. It also covers all conventional newline forms, mixed newlines,
+BOMs, legacy encodings, executable files, symlinks, recursive discovery,
+diffs, exit statuses, syntax diagnostics, and self-idempotence.

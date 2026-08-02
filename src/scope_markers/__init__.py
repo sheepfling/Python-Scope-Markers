@@ -63,7 +63,7 @@ COMPOUND_STATEMENTS: Final = (
     ast.With,
     ast.AsyncWith,
     ast.Try,
-    ast.TryStar,
+    cast(type[ast.AST], getattr(ast, "TryStar", ast.Try)),
     ast.Match,
 )
 
@@ -145,7 +145,13 @@ def _preferred_newline(source: str) -> str:
     if not any(counts.values()):
         return os.linesep
     ####
-    return max(counts, key=lambda ending: (counts[ending], -first_seen.get(ending, sys.maxsize)))
+    return max(
+        counts,
+        key=lambda line_ending: (
+            counts[line_ending],
+            -first_seen.get(line_ending, sys.maxsize),
+        ),
+    )
 ####
 
 
@@ -176,7 +182,7 @@ def _indentation_prefix(line: str) -> str:
 
 
 def _indentation_width(indentation: str) -> int:
-    """Return Python's visual indentation width for spaces, tabs, and formfeeds."""
+    """Return Python's visual indentation width for spaces, tabs, and form-feed characters."""
     width = 0
     for character in indentation:
         if character == " ":
@@ -363,7 +369,7 @@ def format_source(
         ####
         ordered = sorted(
             insertions[index],
-            key=lambda boundary: (boundary.indentation_width, boundary.line_number),
+            key=lambda candidate: (candidate.indentation_width, candidate.line_number),
             reverse=True,
         )
         markers = [f"{boundary.indentation}{marker}{newline}" for boundary in ordered]
@@ -537,7 +543,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also mark documentation-only and ellipsis-only function stubs",
     )
     parser.add_argument("--quiet", action="store_true", help="suppress clean and fixed-file output")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--version", action="version", version=f"scope-markers {__version__}")
     parser.add_argument("paths", nargs="*", type=Path, default=[Path(".")])
     return parser
 ####
