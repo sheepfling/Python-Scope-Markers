@@ -1,0 +1,6 @@
+- id: scope-markers
+  name: scope markers
+  description: Canonicalize #### comments at Python compound-statement boundaries
+  entry: scope-markers --fix
+  language: python
+  types: [python]
