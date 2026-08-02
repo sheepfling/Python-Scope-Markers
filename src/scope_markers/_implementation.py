@@ -514,10 +514,13 @@ def format_source(
 
 def _matches_pattern(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
     relative = path.relative_to(root).as_posix()
+    absolute = path.absolute().as_posix()
+    resolved = path.resolve(strict=False).as_posix()
     return any(
         fnmatch(path.name, pattern)
         or fnmatch(relative, pattern)
-        or fnmatch(path.as_posix(), pattern)
+        or fnmatch(absolute, pattern)
+        or fnmatch(resolved, pattern)
         for pattern in patterns
     )
 ####

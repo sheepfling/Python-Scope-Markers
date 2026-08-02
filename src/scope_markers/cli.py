@@ -34,12 +34,46 @@ def _diff_path(path: Path) -> str:
 ####
 
 
+def _quote_diff_path(path: str) -> str:
+    """Quote non-ASCII path metadata using Git's C-style octal escapes."""
+    raw = path.encode("utf-8")
+    if all(0x20 <= byte < 0x7F and byte not in b'"\\' for byte in raw):
+        return path
+    ####
+    escaped: list[str] = ['"']
+    for byte in raw:
+        if byte == ord('"'):
+            escaped.append('\\"')
+        elif byte == ord("\\"):
+            escaped.append("\\\\")
+        elif byte == 9:
+            escaped.append("\\t")
+        elif byte == 10:
+            escaped.append("\\n")
+        elif byte == 13:
+            escaped.append("\\r")
+        elif 0x20 <= byte < 0x7F:
+            escaped.append(chr(byte))
+        else:
+            escaped.append(f"\\{byte:03o}")
+        ####
+    ####
+    escaped.append('"')
+    return "".join(escaped)
+####
+
+
+def _diff_encoding(encoding: str) -> str:
+    return "utf-8" if encoding.casefold() == "utf-8-sig" else encoding
+####
+
+
 def _contains_bare_cr(source: str) -> bool:
     return any(line.endswith("\r") for line in physical_lines(source))
 ####
 
 
-def _unified_diff(inspection: FileInspection) -> str:
+def _unified_diff(inspection: FileInspection) -> tuple[bytes, ...]:
     """Render a patch with normalized records and explicit EOF markers."""
     source = inspection.source
     formatted = inspection.formatted
@@ -61,8 +95,8 @@ def _unified_diff(inspection: FileInspection) -> str:
     diff = difflib.unified_diff(
         source_lines,
         formatted_lines,
-        fromfile=path,
-        tofile=path,
+        fromfile=_quote_diff_path(f"a/{path}"),
+        tofile=_quote_diff_path(f"b/{path}"),
     )
     output: list[str] = []
     for line in diff:
@@ -74,22 +108,29 @@ def _unified_diff(inspection: FileInspection) -> str:
             output.append("\\ No newline at end of file\n")
         ####
     ####
-    return "".join(output)
+    encoding = _diff_encoding(inspection.encoding)
+    return tuple(
+        line.encode("utf-8" if index < 2 else encoding)
+        for index, line in enumerate(output)
+    )
 ####
 
 
-def _write_diff(diff: str, encoding: str) -> None:
+def _write_diff(diff: Sequence[bytes], encoding: str) -> None:
     """Write diff bytes without platform newline translation."""
     buffer = getattr(sys.stdout, "buffer", None)
     if buffer is None:
-        sys.stdout.write(diff)
+        output_encoding = _diff_encoding(encoding)
+        errors = sys.stdout.errors or "strict"
+        for index, line in enumerate(diff):
+            line_encoding = "utf-8" if index < 2 else output_encoding
+            sys.stdout.write(line.decode(line_encoding, errors))
+        ####
         return
     ####
-    if encoding.casefold() == "utf-8-sig":
-        encoding = "utf-8"
+    for line in diff:
+        buffer.write(line)
     ####
-    errors = sys.stdout.errors or "strict"
-    buffer.write(diff.encode(encoding, errors))
 ####
 
 

@@ -457,11 +457,12 @@ def test_extra_blank_lines_do_not_push_markers_to_the_end() -> None:
 def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
     assert ci.ci_commands("python311") == (
         ("python311", "-m", "pytest", "-q"),
+        ("python311", "scripts/check_diff.py"),
         ("python311", "-m", "ruff", "check", "."),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
         ("python311", "scripts/check_black.py"),
         ("python311", "-m", "pyright"),
-        ("python311", "-m", "build", "--wheel"),
+        ("python311", "scripts/check_build.py"),
         ("scope-markers", "."),
     )
 ####
@@ -470,11 +471,12 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
 def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
     assert ci.ci_commands("python311", fix=True) == (
         ("python311", "-m", "pytest", "-q"),
+        ("python311", "scripts/check_diff.py"),
         ("python311", "-m", "ruff", "check", "--fix", "."),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
         ("python311", "scripts/check_black.py"),
         ("python311", "-m", "pyright"),
-        ("python311", "-m", "build", "--wheel"),
+        ("python311", "scripts/check_build.py"),
         ("scope-markers", "--fix", "."),
     )
 ####
@@ -1238,6 +1240,32 @@ def test_discovery_supports_multiple_roots_and_exclude_patterns(tmp_dir: Path) -
 ####
 
 
+def test_discovery_matches_absolute_include_and_exclude_patterns(
+        tmp_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vendor = tmp_dir / "vendor"
+    other = tmp_dir / "other"
+    vendor.mkdir()
+    other.mkdir()
+    (vendor / "ignored.py").write_text("pass\n", encoding="utf-8")
+    (tmp_dir / "kept.py").write_text("pass\n", encoding="utf-8")
+    (other / "included.bzl").write_text("def rule():\n    pass\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_dir)
+
+    discovered, errors = api.discover_python_files(
+        [Path(".")],
+        include_patterns=((other / "*.bzl").absolute().as_posix(),),
+        exclude_patterns=((vendor / "*.py").absolute().as_posix(),),
+    )
+
+    assert sorted(path.as_posix() for path in discovered) == [
+        "kept.py",
+        "other/included.bzl",
+    ]
+    assert errors == []
+####
+
+
 def test_discovery_include_patterns_allow_python_compatible_extensions(tmp_dir: Path) -> None:
     starlark = tmp_dir / "BUILD.bzl"
     starlark.write_text("def rule():\n    pass\n", encoding="utf-8")
@@ -1569,6 +1597,42 @@ def test_cli_diff_preserves_source_encoding_for_git(
         capture_output=True,
     )
 
+    assert checked.returncode == 0, checked.stderr.decode(errors="replace")
+####
+
+
+def test_cli_diff_encodes_unicode_path_metadata_separately(
+        tmp_dir: Path,
+) -> None:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is unavailable")
+    ####
+
+    repo = tmp_dir / "repo"
+    source_dir = repo / "emoji-😀"
+    source_dir.mkdir(parents=True)
+    path = source_dir / "example.py"
+    path.write_bytes(b"# coding: cp1252\ndef example():\n    value = 'h\xe9llo'\n")
+    subprocess.run([git, "init", "--quiet"], cwd=repo, check=True)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "scope_markers", "--diff", str(path)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+    patch = tmp_dir / "change.patch"
+    patch.write_bytes(completed.stdout)
+
+    checked = subprocess.run(
+        [git, "apply", "--check", str(patch)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
     assert checked.returncode == 0, checked.stderr.decode(errors="replace")
 ####
 

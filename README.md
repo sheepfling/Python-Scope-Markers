@@ -322,7 +322,7 @@ pytest -q
 ruff check .
 flake8 src scripts tests
 pyright
-python -m build --wheel
+python scripts/check_build.py
 scope-markers .
 ```
 
@@ -339,12 +339,13 @@ The complete validation roles are:
 | Tool                | Command                         | Purpose                                                                   |
 |---------------------|---------------------------------|---------------------------------------------------------------------------|
 | Ruff                | `ruff check .`                  | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
+| Diff contract       | `python scripts/check_diff.py` | Verify emitted patches with Git across newline and encoding cases       |
 | Black               | `black src tests scripts`       | Ordinary Python formatting before markers                                 |
 | Black compatibility | `python scripts/check_black.py` | Black format/check smoke test with standalone markers removed             |
 | Flake8              | `flake8 src scripts tests`      | Compatibility lint pass using `.flake8`                                   |
 | Pyright             | `pyright`                       | Strict type checking for `src` and `scripts`                              |
 | Pytest              | `pytest -q`                     | Regression test suite                                                     |
-| Build               | `python -m build --wheel`       | Wheel packaging check                                                     |
+| Build               | `python scripts/check_build.py` | Wheel packaging check                                                     |
 | Scope markers       | `scope-markers .`               | Project-specific marker check                                             |
 
 Ruff's annotation rules require parameters and return values to be annotated for

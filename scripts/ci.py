@@ -29,11 +29,12 @@ def ci_commands(
     scope_markers += (".",)
     return (
         (python, "-m", "pytest", "-q"),
+        (python, "scripts/check_diff.py"),
         ruff,
         (python, "-m", "flake8", "src", "scripts", "tests"),
         (python, "scripts/check_black.py"),
         (python, "-m", "pyright"),
-        (python, "-m", "build", "--wheel"),
+        (python, "scripts/check_build.py"),
         scope_markers,
     )
 ####
