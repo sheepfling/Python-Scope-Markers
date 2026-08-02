@@ -428,8 +428,37 @@ def _scope_boundaries(
 ####
 
 
-def _ast_shape(tree: ast.AST) -> str:
-    return ast.dump(tree, annotate_fields=True, include_attributes=False)
+def _ast_equivalent(left: ast.AST, right: ast.AST) -> bool:
+    """Compare AST structure iteratively, excluding source-location attributes."""
+    pending: list[tuple[object, object]] = [(left, right)]
+    while pending:
+        current_left, current_right = pending.pop()
+        if isinstance(current_left, ast.AST):
+            if not isinstance(current_right, ast.AST):
+                return False
+            ####
+            if type(current_left) is not type(current_right):
+                return False
+            ####
+            for field in reversed(current_left._fields):
+                pending.append((getattr(current_left, field), getattr(current_right, field)))
+            ####
+            continue
+        ####
+        if isinstance(current_left, list):
+            if not isinstance(current_right, list) or len(current_left) != len(current_right):
+                return False
+            ####
+            left_items = cast(list[object], current_left)
+            right_items = cast(list[object], current_right)
+            pending.extend(zip(reversed(left_items), reversed(right_items), strict=True))
+            continue
+        ####
+        if current_left != current_right:
+            return False
+        ####
+    ####
+    return True
 ####
 
 
@@ -464,7 +493,7 @@ def format_source(
     ####
     formatted = "".join(lines)
     formatted_tree = ast.parse(formatted, filename=filename)
-    if _ast_shape(formatted_tree) != _ast_shape(tree):
+    if not _ast_equivalent(formatted_tree, tree):
         raise ScopeMarkersError("scope-marker formatting changed the Python AST")
     ####
     return formatted
