@@ -346,6 +346,7 @@ def test_ci_run_command_reports_startup_errors(
 ) -> None:
     def fail_to_start(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         raise FileNotFoundError("command not found")
+    ####
 
     monkeypatch.setattr(ci.subprocess, "run", fail_to_start)
 
