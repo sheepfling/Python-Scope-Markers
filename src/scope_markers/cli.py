@@ -18,6 +18,7 @@ from .api import (
     __version__,
     discover_python_files,
     inspect_file,
+    inspect_stripped_file,
 )
 
 
@@ -39,6 +40,11 @@ def _build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--fix", action="store_true", help="rewrite files in place")
     mode.add_argument("--diff", action="store_true", help="print a unified diff without rewriting")
+    parser.add_argument(
+        "--strip",
+        action="store_true",
+        help="remove standalone scope-marker comments instead of adding them",
+    )
     parser.add_argument(
         "--mark-stubs",
         action="store_true",
@@ -90,10 +96,12 @@ def _report_errors(errors: Sequence[str]) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
     paths = [Path(path) for path in args.paths]
     fix = bool(args.fix)
     show_diff = bool(args.diff)
+    strip = bool(args.strip)
     mark_stubs = bool(args.mark_stubs)
     indent_width = args.indent_width if isinstance(args.indent_width, int) else None
     quiet = bool(args.quiet)
@@ -102,6 +110,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     include_patterns = tuple(args.include)
     exclude_patterns = tuple(args.exclude)
     use_default_excludes = not bool(args.no_default_excludes)
+    if strip and indent_width is not None:
+        parser.error("--indent-width cannot be used with --strip")
+    ####
 
     files, errors = discover_python_files(
         paths,
@@ -119,9 +130,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path in files:
         processed_files += 1
         try:
-            inspection = inspect_file(
-                path, mark_stubs=mark_stubs, indent_width=indent_width
-            )
+            if strip:
+                inspection = inspect_stripped_file(path)
+            else:
+                inspection = inspect_file(
+                    path, mark_stubs=mark_stubs, indent_width=indent_width
+                )
+            ####
             if not inspection.changed:
                 if verbose:
                     print(f"clean: {path}", file=sys.stderr if show_diff else sys.stdout)
@@ -132,15 +147,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             if show_diff:
                 write_diff(render_diff(inspection), inspection.encoding)
                 if verbose:
-                    print(f"needs markers: {path}", file=sys.stderr)
+                    message = "markers to strip" if strip else "needs markers"
+                    print(f"{message}: {path}", file=sys.stderr)
                 ####
             elif fix:
                 write_atomic(path, inspection.formatted.encode(inspection.encoding))
                 if not quiet:
-                    print(f"fixed: {path}")
+                    action = "stripped" if strip else "fixed"
+                    print(f"{action}: {path}")
                 ####
             elif verbose or not quiet:
-                print(f"needs markers: {path}")
+                message = "markers to strip" if strip else "needs markers"
+                print(f"{message}: {path}")
             ####
             if fail_fast:
                 break
@@ -168,7 +186,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ####
     if not quiet:
         if fix:
-            action = "fixed" if changed else "already clean"
+            if strip:
+                action = "stripped" if changed else "already stripped"
+            else:
+                action = "fixed" if changed else "already clean"
+            ####
             count = len(changed) if changed else processed_files
         else:
             action = "clean"

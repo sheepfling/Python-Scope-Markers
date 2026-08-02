@@ -775,7 +775,7 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
         ("python311", "scripts/check_black.py"),
         ("python311", "scripts/check_pyright.py"),
         ("python311", "scripts/check_build.py"),
-        ("scope-markers", "src", "scripts", "tests"),
+        ("python311", "-m", "scope_markers", "src", "scripts", "tests"),
     )
 ####
 
@@ -831,7 +831,15 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
         ("python311", "scripts/check_black.py"),
         ("python311", "scripts/check_pyright.py"),
         ("python311", "scripts/check_build.py"),
-        ("scope-markers", "--fix", "src", "scripts", "tests"),
+        (
+            "python311",
+            "-m",
+            "scope_markers",
+            "--fix",
+            "src",
+            "scripts",
+            "tests",
+        ),
     )
 ####
 
@@ -1806,8 +1814,67 @@ def test_package_init_does_not_reexport_implementation_api() -> None:
 def test_programmatic_api_exposes_stable_formatter_functions() -> None:
     assert api.format_source("def example():\n    pass\n").endswith("####\n")
     assert api.process_file is scope_markers.process_file
+    assert api.strip_markers is scope_markers.strip_markers
+    assert api.strip_file is scope_markers.strip_file
     assert api.discover_python_files is scope_markers.discover_python_files
     assert issubclass(api.ScopeMarkersError, ValueError)
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_strip_markers_removes_only_standalone_recognized_comments(newline: str) -> None:
+    source = (
+        "if enabled:\n"
+        "    value = '####'\n"
+        "####\n"
+        "##\n"
+        "#### trailing explanation\n"
+        "    # ####\n"
+        "not valid Python\n"
+    ).replace("\n", newline)
+
+    assert api.strip_markers(source) == (
+        "if enabled:\n"
+        "    value = '####'\n"
+        "#### trailing explanation\n"
+        "    # ####\n"
+        "not valid Python\n"
+    ).replace("\n", newline)
+####
+
+
+def test_strip_markers_preserves_markers_inside_multiline_strings_and_mixed_endings() -> None:
+    source = (
+        'description = """A marker-looking line follows:\r\n'
+        "####\r\n"
+        '"""\r\n'
+        "####\r\n"
+        "value = 1\n"
+        "##\n"
+    )
+
+    assert api.strip_markers(source) == (
+        'description = """A marker-looking line follows:\r\n'
+        "####\r\n"
+        '"""\r\n'
+        "value = 1\n"
+    )
+####
+
+
+def test_strip_file_preserves_source_encoding_and_reports_missing_files(tmp_path: Path) -> None:
+    path = tmp_path / "cp1252.py"
+    source = b"# coding: cp1252\r\nlabel = '\xe9'\r\n####\r\n"
+    path.write_bytes(source)
+
+    assert api.strip_file(path, fix=False) == (True, None)
+    assert api.strip_file(path, fix=True) == (True, None)
+    assert path.read_bytes() == b"# coding: cp1252\r\nlabel = '\xe9'\r\n"
+
+    changed, error = api.strip_file(tmp_path / "missing.py", fix=True)
+    assert changed is False
+    assert error is not None
+    assert "missing.py" in error
 ####
 
 
@@ -1820,8 +1887,11 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
         "discover_python_files",
         "format_source",
         "inspect_file",
+        "inspect_stripped_file",
         "process_file",
         "python_files",
+        "strip_file",
+        "strip_markers",
     )
     assert api.__version__ == installed_version("scope-markers")
 
@@ -1836,6 +1906,12 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
     assert api.process_file(path, fix=False) == (True, None)
     assert api.process_file(path, fix=True) == (True, None)
     assert api.process_file(path, fix=False) == (False, None)
+
+    assert api.process_file(path, fix=True) == (False, None)
+    assert api.strip_file(path, fix=False) == (True, None)
+    assert api.inspect_stripped_file(path).formatted == inspection.source
+    assert api.strip_file(path, fix=True) == (True, None)
+    assert api.strip_file(path, fix=False) == (False, None)
 
     starlark = tmp_path / "BUILD.bzl"
     starlark.write_text("def rule():\n    pass\n", encoding="utf-8")
@@ -1852,17 +1928,26 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
 ####
 
 
-def test_console_script_is_registered_and_usable() -> None:
+def test_cli_entry_point_is_registered_and_module_is_usable() -> None:
     registered = {
         entry.name: entry.value for entry in entry_points(group="console_scripts")
     }
     assert registered["scope-markers"] == "scope_markers.cli:main"
 
+    project_root = Path(__file__).resolve().parents[1]
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        path
+        for path in (str(project_root / "src"), environment.get("PYTHONPATH"))
+        if path
+    )
     completed = subprocess.run(
-        ["scope-markers", "--version"],
+        [sys.executable, "-m", "scope_markers", "--version"],
+        cwd=project_root,
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
 
     assert completed.returncode == 0
@@ -1882,6 +1967,65 @@ def test_check_fix_and_diff_exit_codes(tmp_path: Path, capsys: pytest.CaptureFix
     assert "+####" in diff_output
     assert cli.main(["--fix", "--quiet", str(path)]) == 0
     assert cli.main(["--quiet", str(path)]) == 0
+####
+
+
+def test_cli_strip_supports_check_diff_and_fix(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "example.py"
+    path.write_text("if enabled:\n    pass\n####\n", encoding="utf-8")
+
+    assert cli.main(["--strip", str(path)]) == 1
+    assert f"markers to strip: {path}" in capsys.readouterr().out
+
+    assert cli.main(["--strip", "--diff", str(path)]) == 1
+    assert "-####" in capsys.readouterr().out
+
+    assert cli.main(["--strip", "--fix", "--quiet", str(path)]) == 0
+    assert path.read_text(encoding="utf-8") == "if enabled:\n    pass\n"
+    assert cli.main(["--strip", "--quiet", str(path)]) == 0
+####
+
+
+def test_cli_strip_accepts_invalid_python_and_stub_files(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    invalid = tmp_path / "invalid.py"
+    invalid.write_text("not valid Python\n####\n", encoding="utf-8")
+    assert cli.main(["--strip", "--fix", "--quiet", str(invalid)]) == 0
+    assert invalid.read_text(encoding="utf-8") == "not valid Python\n"
+
+    stub = tmp_path / "interfaces.pyi"
+    stub.write_text("def example() -> None: ...\n####\n", encoding="utf-8")
+    assert cli.main(["--strip", "--mark-stubs", "--fix", "--quiet", str(stub)]) == 0
+    assert stub.read_text(encoding="utf-8") == "def example() -> None: ...\n"
+    assert capsys.readouterr().out == ""
+####
+
+
+def test_cli_strip_diff_rejects_changed_bare_cr_files(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "bare-cr.py"
+    path.write_bytes(b"value = 1\r####\r")
+
+    assert cli.main(["--strip", "--diff", str(path)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "bare-CR line endings" in captured.err
+####
+
+
+def test_cli_rejects_indent_normalization_while_stripping(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exception:
+        cli.main(["--strip", "--indent-width", "2"])
+    ####
+
+    assert exception.value.code == 2
+    assert "--indent-width cannot be used with --strip" in capsys.readouterr().err
 ####
 
 
@@ -1935,6 +2079,7 @@ def test_cli_help_option_lists_supported_options(
     for option in (
             "--fix",
             "--diff",
+            "--strip",
             "--mark-stubs",
             "--indent-width",
             "--quiet",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -21,7 +22,7 @@ def ci_commands(
         ruff += ("--fix",)
     ####
     ruff += ("src", "scripts", "tests")
-    scope_markers = ("scope-markers",)
+    scope_markers = (python, "-m", "scope_markers")
     if fix:
         scope_markers += ("--fix",)
     ####
@@ -41,8 +42,14 @@ def ci_commands(
 
 def run_command(command: Sequence[str]) -> int:
     """Run one CI command from the repository root and return its exit code."""
+    environment = os.environ.copy()
+    source_path = str(ROOT / "src")
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        path for path in (source_path, existing_pythonpath) if path
+    )
     try:
-        completed = subprocess.run(command, cwd=ROOT, check=False)
+        completed = subprocess.run(command, cwd=ROOT, env=environment, check=False)
     except OSError as error:
         print(f"CI command could not start: {' '.join(command)}: {error}", file=sys.stderr)
         return 1

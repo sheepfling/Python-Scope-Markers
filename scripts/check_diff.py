@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from scope_markers.api import inspect_file
+from scope_markers.api import inspect_file, inspect_stripped_file
 
 DIFF_CASES: tuple[tuple[str, Path, bytes], ...] = (
     (
@@ -49,8 +49,23 @@ DIFF_CASES: tuple[tuple[str, Path, bytes], ...] = (
     ),
 )
 AUTOCRLF_MODES = ("false", "true", "input")
+STRIP_DIFF_CASES: tuple[tuple[str, Path, bytes], ...] = (
+    (
+        "strip-crlf",
+        Path("src/example.py"),
+        b"def example():\r\n    pass\r\n####\r\n",
+    ),
+)
 
-def _run_diff_case(git: str, name: str, relative: Path, source: bytes) -> str | None:
+
+def _run_diff_case(
+        git: str,
+        name: str,
+        relative: Path,
+        source: bytes,
+        *,
+        strip: bool = False,
+) -> str | None:
     with TemporaryDirectory(prefix=f"scope-markers-diff-{name}-") as raw:
         root = Path(raw)
         path = root / relative
@@ -62,8 +77,13 @@ def _run_diff_case(git: str, name: str, relative: Path, source: bytes) -> str | 
         if initialized.returncode:
             return initialized.stderr.decode(errors="replace")
         ####
+        command = [sys.executable, "-m", "scope_markers", "--diff"]
+        if strip:
+            command.append("--strip")
+        ####
+        command.append(str(path))
         completed = subprocess.run(
-            [sys.executable, "-m", "scope_markers", "--diff", str(path)],
+            command,
             cwd=root,
             check=False,
             capture_output=True,
@@ -83,7 +103,7 @@ def _run_diff_case(git: str, name: str, relative: Path, source: bytes) -> str | 
         if checked.returncode:
             return checked.stderr.decode(errors="replace")
         ####
-        inspection = inspect_file(path)
+        inspection = inspect_stripped_file(path) if strip else inspect_file(path)
         expected = inspection.formatted.encode(inspection.encoding)
         applied = subprocess.run(
             [git, "-c", "core.autocrlf=false", "apply", str(patch)],
@@ -367,6 +387,13 @@ def main() -> int:
             return 1
         ####
     ####
+    for name, relative, source in STRIP_DIFF_CASES:
+        failure = _run_diff_case(git, name, relative, source, strip=True)
+        if failure is not None:
+            print(f"strip diff contract failed for {name}: {failure}", file=sys.stderr)
+            return 1
+        ####
+    ####
     failure = _check_subdirectory_path(git)
     if failure is not None:
         print(f"diff contract failed for subdirectory path: {failure}", file=sys.stderr)
@@ -394,6 +421,7 @@ def main() -> int:
     ####
     print(
         f"diff contract passed ({len(DIFF_CASES)} content cases, "
+        f"{len(STRIP_DIFF_CASES)} strip case, "
         "2 nested-path cases, 1 multi-file case, 6 autocrlf cases, "
         "bare-CR rejection, and pathological filename coverage where supported)"
     )

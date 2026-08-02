@@ -314,6 +314,20 @@ def _without_markers(source: str, marker: str) -> str:
 ####
 
 
+def strip_markers(source: str) -> str:
+    """Remove every standalone recognized scope-marker comment from source."""
+    marker_lines: set[int] = set()
+    for marker in MARKER_STYLES:
+        marker_lines.update(_standalone_marker_lines(source, marker))
+    ####
+    if not marker_lines:
+        return source
+    ####
+    lines = _physical_lines(source)
+    return "".join(line for index, line in enumerate(lines) if index not in marker_lines)
+####
+
+
 def _parents(tree: ast.AST) -> dict[int, ast.AST]:
     parents: dict[int, ast.AST] = {}
     for parent in ast.walk(tree):
@@ -1053,6 +1067,18 @@ def inspect_file(
 ####
 
 
+def inspect_stripped_file(path: Path) -> FileInspection:
+    """Read one file and prepare an inspection that removes scope markers."""
+    source, encoding = _read_source(path)
+    return FileInspection(
+        path=path,
+        source=source,
+        formatted=strip_markers(source),
+        encoding=encoding,
+    )
+####
+
+
 def _write_atomic(path: Path, data: bytes) -> None:
     """Replace a file atomically while preserving its executable permission bits."""
     target = path.resolve(strict=True) if path.is_symlink() else path
@@ -1122,6 +1148,20 @@ def process_file(
             tokenize.TokenError,
             ScopeMarkersError,
     ) as error:
+        return False, _error_message(path, error)
+    ####
+    return inspection.changed, None
+####
+
+
+def strip_file(path: Path, *, fix: bool) -> tuple[bool, str | None]:
+    """Check or strip standalone scope markers from one file."""
+    try:
+        inspection = inspect_stripped_file(path)
+        if inspection.changed and fix:
+            _write_atomic(path, inspection.formatted.encode(inspection.encoding))
+        ####
+    except (OSError, UnicodeError, tokenize.TokenError, ScopeMarkersError) as error:
         return False, _error_message(path, error)
     ####
     return inspection.changed, None

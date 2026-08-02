@@ -66,6 +66,7 @@ returns exit status `1` without changing them. Use `--diff` to show a patch or
 scope-markers src tests                 # check only
 scope-markers --diff src tests          # check and print a patch
 scope-markers --fix src tests           # rewrite files
+scope-markers --strip --fix src tests   # remove standalone scope markers
 scope-markers --mark-stubs --fix src    # include .pyi files and mark stub-only functions
 scope-markers --indent-width 2 --fix src  # use two-space block indentation and mark
 scope-markers --verbose src tests       # report every file's status
@@ -83,6 +84,18 @@ spaces before scope markers are regenerated. It converts block-indentation tabs
 to spaces and adjusts block comments, but deliberately preserves multiline
 continuation alignment and blank-line whitespace. It is not a replacement for
 a full code formatter; when using one, run it before scope markers.
+
+To reverse scope-marker insertion, use `--strip`. It removes exact standalone
+`##` and `####` marker comments only; comments containing marker-like text and
+ordinary source lines remain unchanged. Like normal formatting, it supports
+check mode, `--diff`, and `--fix`. `--strip` intentionally cannot be combined
+with `--indent-width`, because stripping does not reformat code:
+
+```bash
+scope-markers --strip src tests          # report files containing markers
+scope-markers --strip --diff src tests   # show removals as a patch
+scope-markers --strip --fix src tests    # remove markers in place
+```
 
 Diff output preserves LF and CRLF records and includes explicit markers for a
 missing final newline. `--diff` rejects changed files with bare-CR line endings
@@ -338,7 +351,7 @@ ruff check src scripts tests
 flake8 src scripts tests
 python scripts/check_pyright.py
 python scripts/check_build.py
-scope-markers src scripts tests
+python -m scope_markers src scripts tests
 ```
 
 For ordinary Python formatting, run Black before applying the project-specific
@@ -361,7 +374,7 @@ The complete validation roles are:
 | Pyright             | `python scripts/check_pyright.py` | Strict type checking for `src`, `scripts`, and `tests`                    |
 | Pytest              | `pytest -q`                       | Regression test suite                                                     |
 | Build               | `python scripts/check_build.py`   | Wheel packaging check                                                     |
-| Scope markers       | `scope-markers src scripts tests` | Project-specific marker check                                             |
+| Scope markers       | `python -m scope_markers src scripts tests` | Project-specific marker check                                             |
 
 Ruff's annotation rules require parameters and return values to be annotated for
 new functions, methods, and test helpers. Pyright then type-checks the package
