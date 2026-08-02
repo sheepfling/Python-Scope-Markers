@@ -352,6 +352,7 @@ flake8 src scripts tests
 python scripts/check_pyright.py
 python scripts/check_build.py
 python -m scope_markers src scripts tests
+python scripts/check_rumdl.py
 ```
 
 For ordinary Python formatting, run Black before applying the project-specific
@@ -375,6 +376,7 @@ The complete validation roles are:
 | Pytest              | `pytest -q`                                 | Regression test suite                                                     |
 | Build               | `python scripts/check_build.py`             | Wheel packaging check                                                     |
 | Scope markers       | `python -m scope_markers src scripts tests` | Project-specific marker check                                             |
+| rumdl               | `python scripts/check_rumdl.py`             | Markdown cleanliness and style checks                                     |
 
 Ruff's annotation rules require parameters and return values to be annotated for
 new functions, methods, and test helpers. Pyright then type-checks the package

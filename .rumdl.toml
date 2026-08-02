@@ -1,0 +1,6 @@
+[global]
+# Keep Markdown's line-length policy aligned with the Python tooling.
+line-length = 100
+
+[MD013]
+line_length = 100

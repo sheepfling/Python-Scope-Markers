@@ -13,7 +13,7 @@ import pytest
 
 import scope_markers as package
 from scope_markers import api, cli
-from scripts import check_black, check_diff, ci
+from scripts import check_black, check_diff, check_rumdl, ci
 
 # Literal ``####`` values intentionally verify the formatter's defining output.
 scope_markers = api
@@ -776,6 +776,7 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
         ("python311", "scripts/check_pyright.py"),
         ("python311", "scripts/check_build.py"),
         ("python311", "-m", "scope_markers", "src", "scripts", "tests"),
+        ("python311", "scripts/check_rumdl.py"),
     )
 ####
 
@@ -840,6 +841,7 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
             "scripts",
             "tests",
         ),
+        ("python311", "scripts/check_rumdl.py", "--fix"),
     )
 ####
 
@@ -890,6 +892,34 @@ def test_ci_main_forwards_fix_option(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert ci.main(["--fix"]) == 0
     assert received == [True]
+####
+
+
+def test_ci_help_explains_validation_modes(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exception:
+        ci.main(["--help"])
+    ####
+
+    output = capsys.readouterr().out
+    assert exception.value.code == 0
+    assert "same order as CI" in output
+    assert "Ruff, scope-markers, and rumdl" in output
+    assert "python scripts/ci.py --fix" in output
+####
+
+
+def test_rumdl_help_explains_check_and_fix_modes(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exception:
+        check_rumdl.main(["--help"])
+    ####
+
+    output = capsys.readouterr().out
+    assert exception.value.code == 0
+    assert "README.md and CHANGELOG.md" in output
+    assert "--fix" in output
+    assert "read-only" in output
 ####
 
 
@@ -2108,6 +2138,9 @@ def test_cli_help_option_lists_supported_options(
     ):
         assert option in output
     ####
+    assert "default mode checks files without changing them" in output
+    assert "file or directory to inspect" in output
+    assert "examples:" in output
 ####
 
 

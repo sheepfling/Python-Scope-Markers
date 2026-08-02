@@ -27,6 +27,10 @@ def ci_commands(
         scope_markers += ("--fix",)
     ####
     scope_markers += ("src", "scripts", "tests")
+    rumdl = (python, "scripts/check_rumdl.py")
+    if fix:
+        rumdl += ("--fix",)
+    ####
     return (
         (python, "-m", "pytest", "-q"),
         (python, "scripts/check_diff.py"),
@@ -36,6 +40,7 @@ def ci_commands(
         (python, "scripts/check_pyright.py"),
         (python, "scripts/check_build.py"),
         scope_markers,
+        rumdl,
     )
 ####
 
@@ -60,11 +65,24 @@ def run_command(command: Sequence[str]) -> int:
 
 def main(argv: Sequence[str] = ()) -> int:
     """Run each CI command in order, stopping at the first failure."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the repository's checks in the same order as CI, stopping at "
+            "the first failure."
+        ),
+        epilog=(
+            "By default every check is read-only. With --fix, Ruff, scope-markers, "
+            "and rumdl may update files as part of validation.\n\n"
+            "examples:\n"
+            "  python scripts/ci.py\n"
+            "  python scripts/ci.py --fix"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--fix",
         action="store_true",
-        help="allow Ruff and scope-markers to rewrite files during validation",
+        help="allow Ruff, scope-markers, and rumdl to rewrite files during validation",
     )
     args = parser.parse_args(argv)
     commands = ci_commands(fix=True) if args.fix else ci_commands()

@@ -20,6 +20,23 @@ from .api import (
     inspect_stripped_file,
 )
 
+_DESCRIPTION = """Inspect Python source and add or remove standalone scope-marker comments.
+
+The default mode checks files without changing them and exits with status 1 when
+markers would be added or regenerated. Use --fix to rewrite files, or --diff to
+print the proposed changes as a unified diff. With no PATH arguments, the
+current directory is discovered recursively.
+"""
+
+_EPILOG = """examples:
+  scope-markers src tests
+  scope-markers --diff src tests
+  scope-markers --fix --indent-width 2 src
+  scope-markers --strip --fix src tests
+
+Use --help with a command installed as either `scope-markers` or
+`python -m scope_markers`."""
+
 
 def _positive_indent_width(value: str) -> int:
     try:
@@ -35,55 +52,88 @@ def _positive_indent_width(value: str) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=_DESCRIPTION,
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--fix", action="store_true", help="rewrite files in place")
-    mode.add_argument("--diff", action="store_true", help="print a unified diff without rewriting")
+    mode.add_argument(
+        "--fix",
+        action="store_true",
+        help="apply the requested marker operation and indentation changes in place",
+    )
+    mode.add_argument(
+        "--diff",
+        action="store_true",
+        help="print a unified diff to standard output without rewriting files",
+    )
     parser.add_argument(
         "--strip",
         action="store_true",
-        help="remove standalone scope-marker comments instead of adding them",
+        help="remove standalone scope-marker comments instead of adding or regenerating them",
     )
     parser.add_argument(
         "--mark-stubs",
         action="store_true",
-        help="also discover .pyi files and mark documentation-only and ellipsis-only stubs",
+        help="include recursively discovered .pyi files; mark documentation-only "
+        "and ellipsis-only definitions",
     )
     parser.add_argument(
         "--indent-width",
         type=_positive_indent_width,
         metavar="WIDTH",
-        help="normalize logical block indentation to this many spaces before marking",
+        help="normalize logical block indentation to WIDTH spaces before marking "
+        "(cannot be combined with --strip)",
     )
     output = parser.add_mutually_exclusive_group()
-    output.add_argument("--quiet", action="store_true", help="suppress status output")
-    output.add_argument("--verbose", action="store_true", help="report each processed file")
+    output.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress normal status and summary output; diagnostics remain visible",
+    )
+    output.add_argument(
+        "--verbose",
+        action="store_true",
+        help="report the status of every processed file, including clean files",
+    )
     parser.add_argument(
         "--fail-fast",
         action="store_true",
-        help="stop after the first changed file or processing error",
+        help="stop after the first changed file or processing/discovery error",
     )
     parser.add_argument(
         "--no-default-excludes",
         action="store_true",
-        help="also scan normally skipped directories such as .git and .venv",
+        help="scan directories normally pruned, such as .git and .venv "
+        "(explicit --exclude patterns still apply)",
     )
     parser.add_argument(
         "--include",
         action="append",
         default=[],
         metavar="PATTERN",
-        help="include additional recursively discovered paths matching this glob (repeatable)",
+        help="include additional recursively discovered paths matching this glob; "
+        "repeat for multiple patterns",
     )
     parser.add_argument(
         "--exclude",
         action="append",
         default=[],
         metavar="PATTERN",
-        help="skip recursively discovered paths matching this glob (repeatable)",
+        help="skip recursively discovered paths matching this glob; repeat for "
+        "multiple patterns (explicit files are still processed)",
     )
     parser.add_argument("--version", action="version", version=f"scope-markers {__version__}")
-    parser.add_argument("paths", nargs="*", type=Path, default=[Path(".")])
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        default=[Path(".")],
+        metavar="PATH",
+        help="file or directory to inspect; directories are recursive "
+        "(default: current directory)",
+    )
     return parser
 ####
 
