@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import sys
+from importlib.metadata import entry_points
 from importlib.metadata import version as installed_version
 from pathlib import Path
 
@@ -233,7 +234,8 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
         ("python311", "-m", "ruff", "check", "."),
         ("python311", "-m", "pyright"),
         ("python311", "-m", "build", "--wheel"),
-        ("python311", "scope_markers.py", "."),
+        ("python311", "scope_markers.py", "scripts"),
+        ("scope-markers", "."),
     )
 ####
 
@@ -645,6 +647,24 @@ def test_token_error_reports_line_and_column(tmp_path: Path) -> None:
 
 def test_version_is_loaded_from_installed_metadata() -> None:
     assert scope_markers.__version__ == installed_version("scope-markers")
+####
+
+
+def test_console_script_is_registered_and_usable() -> None:
+    registered = {
+        entry.name: entry.value for entry in entry_points(group="console_scripts")
+    }
+    assert registered["scope-markers"] == "scope_markers:main"
+
+    completed = subprocess.run(
+        ["scope-markers", "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == f"scope-markers {scope_markers.__version__}"
 ####
 
 

@@ -63,7 +63,7 @@ standalone source boundary at which this formatter should insert `####`.
 
 ## Validation performed
 
-- 56 collected pytest cases on Python 3.13: 52 passed and four expected
+- 57 collected pytest cases on Python 3.13: 53 passed and four expected
   Python 3.14/platform-specific cases skipped as intended.
 - Bytecode compilation of the formatter and test module.
 - Self-formatting and self-idempotence.
