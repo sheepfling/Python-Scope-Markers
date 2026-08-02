@@ -369,6 +369,7 @@ def _match_case_line_number(lines: Sequence[str], pattern_line: int) -> int:
         ):
             case_line = token.start[0]
         ####
+    ####
     if case_line is not None:
         return case_line
     ####
