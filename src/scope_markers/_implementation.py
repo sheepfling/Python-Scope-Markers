@@ -9,6 +9,7 @@ import stat
 import sys
 import tempfile
 import tokenize
+from bisect import bisect_right
 from collections.abc import Iterable, Mapping, MutableSequence, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -168,16 +169,12 @@ def _preferred_newline(source: str) -> str:
 
 
 def _newline_for_insertion(lines: Sequence[str], index: int, default: str) -> str:
-    if index > 0:
-        ending = _line_ending(lines[index - 1])
-        if ending is not None:
-            return ending
-        ####
-    ####
-    if index < len(lines):
-        ending = _line_ending(lines[index])
-        if ending is not None:
-            return ending
+    for neighbor in (index - 1, index):
+        if 0 <= neighbor < len(lines):
+            ending = _line_ending(lines[neighbor])
+            if ending is not None:
+                return ending
+            ####
         ####
     ####
     return default
@@ -236,7 +233,10 @@ def _detect_marker_style(source: str) -> str:
     styles = {marker for marker in MARKER_STYLES if _standalone_marker_lines(source, marker)}
     if len(styles) > 1:
         found = ", ".join(sorted(styles))
-        raise ScopeMarkersError(f"conflicting standalone marker styles: {found}")
+        raise ScopeMarkersError(
+            f"conflicting standalone marker styles: {found}; "
+            "keep one marker style per file or remove the conflicting markers"
+        )
     ####
     return next(iter(styles), MARKER)
 ####
@@ -327,67 +327,89 @@ def _insertion_index(lines: Sequence[str], node: ast.stmt, indentation_width: in
 ####
 
 
+def _match_case_header_lines(lines: Sequence[str]) -> list[int]:
+    case_lines: list[int] = []
+    at_statement_start = True
+    source = "".join(lines)
+    for token in tokenize.generate_tokens(StringIO(source).readline):
+        if token.type == tokenize.NAME and token.string == "case" and at_statement_start:
+            case_lines.append(token.start[0])
+        ####
+        # NL and backslash continuations stay in the same logical statement;
+        # only NEWLINE can begin another clause header.
+        if token.type == tokenize.NEWLINE:
+            at_statement_start = True
+        elif token.type not in (tokenize.INDENT, tokenize.DEDENT):
+            at_statement_start = False
+        ####
+    ####
+    return case_lines
+####
+
+
+def _match_case_line_number(case_header_lines: Sequence[int], pattern_line: int) -> int:
+    header_index = bisect_right(case_header_lines, pattern_line) - 1
+    if header_index >= 0:
+        return case_header_lines[header_index]
+    ####
+    raise ScopeMarkersError("match case has no case header")
+####
+
+
+def _match_case_boundary(
+        case: ast.match_case,
+        lines: Sequence[str],
+        case_header_lines: Sequence[int],
+) -> ScopeBoundary | None:
+    if not case.body:
+        return None
+    ####
+    pattern_line = getattr(case.pattern, "lineno", None)
+    if not isinstance(pattern_line, int) or not 1 <= pattern_line <= len(lines):
+        raise ScopeMarkersError("match case has an invalid source location")
+    ####
+    line_number = _match_case_line_number(case_header_lines, pattern_line)
+    indentation = _indentation_prefix(lines[line_number - 1])
+    width = _indentation_width(indentation)
+    return ScopeBoundary(
+        index=_insertion_index(lines, case.body[-1], width),
+        indentation=indentation,
+        indentation_width=width,
+        line_number=line_number,
+    )
+####
+
+
 def _match_case_boundaries(tree: ast.AST, lines: Sequence[str]) -> list[ScopeBoundary]:
+    case_header_lines = _match_case_header_lines(lines)
     boundaries: list[ScopeBoundary] = []
     for candidate in ast.walk(tree):
         if not isinstance(candidate, ast.Match):
             continue
         ####
         for case in candidate.cases:
-            if not case.body:
-                continue
+            boundary = _match_case_boundary(case, lines, case_header_lines)
+            if boundary is not None:
+                boundaries.append(boundary)
             ####
-            pattern_line = getattr(case.pattern, "lineno", None)
-            if not isinstance(pattern_line, int) or not 1 <= pattern_line <= len(lines):
-                raise ScopeMarkersError("match case has an invalid source location")
-            ####
-            line_number = _match_case_line_number(lines, pattern_line)
-            indentation = _indentation_prefix(lines[line_number - 1])
-            width = _indentation_width(indentation)
-            boundaries.append(
-                ScopeBoundary(
-                    index=_insertion_index(lines, case.body[-1], width),
-                    indentation=indentation,
-                    indentation_width=width,
-                    line_number=line_number,
-                )
-            )
         ####
     ####
     return boundaries
 ####
 
 
-def _match_case_line_number(lines: Sequence[str], pattern_line: int) -> int:
-    case_tokens: list[tuple[int, int, int]] = []
-    bracket_depth = 0
-    source = "".join(lines)
-    for token in tokenize.generate_tokens(StringIO(source).readline):
-        if token.start[0] > pattern_line:
-            break
-        ####
-        if token.type == tokenize.NAME and token.string == "case":
-            case_tokens.append((token.start[0], token.start[1], bracket_depth))
-        ####
-        if token.type == tokenize.OP:
-            if token.string in ")]}":
-                bracket_depth -= 1
-            elif token.string in "([{":
-                bracket_depth += 1
-            ####
-        ####
+def _compound_boundary(node: ast.stmt, lines: Sequence[str]) -> ScopeBoundary:
+    if not 1 <= node.lineno <= len(lines):
+        raise ScopeMarkersError("compound statement has an invalid source location")
     ####
-    if case_tokens:
-        header_depth = min(depth for _, _, depth in case_tokens)
-        header_tokens = [
-            (line, column)
-            for line, column, depth in case_tokens
-            if depth == header_depth
-        ]
-        header_line = max(line for line, _ in header_tokens)
-        return header_line
-    ####
-    raise ScopeMarkersError("match case has no case header")
+    indentation = _indentation_prefix(lines[node.lineno - 1])
+    width = _indentation_width(indentation)
+    return ScopeBoundary(
+        index=_insertion_index(lines, node, width),
+        indentation=indentation,
+        indentation_width=width,
+        line_number=node.lineno,
+    )
 ####
 
 
@@ -397,22 +419,10 @@ def _scope_boundaries(
         *,
         mark_stubs: bool,
 ) -> list[ScopeBoundary]:
-    boundaries: list[ScopeBoundary] = []
-    for node in _compound_nodes(tree, mark_stubs=mark_stubs):
-        if not 1 <= node.lineno <= len(lines):
-            raise ScopeMarkersError("compound statement has an invalid source location")
-        ####
-        indentation = _indentation_prefix(lines[node.lineno - 1])
-        width = _indentation_width(indentation)
-        boundaries.append(
-            ScopeBoundary(
-                index=_insertion_index(lines, node, width),
-                indentation=indentation,
-                indentation_width=width,
-                line_number=node.lineno,
-            )
-        )
-    ####
+    boundaries = [
+        _compound_boundary(node, lines)
+        for node in _compound_nodes(tree, mark_stubs=mark_stubs)
+    ]
     boundaries.extend(_match_case_boundaries(tree, lines))
     return boundaries
 ####
@@ -497,6 +507,8 @@ def _should_prune_directory(
         patterns: tuple[str, ...],
         use_default_excludes: bool,
 ) -> bool:
+    # Prune before descent: generated/default-excluded trees and symlinked or
+    # explicitly excluded directories must never enter recursive discovery.
     return (
             (use_default_excludes and _is_skipped_directory(name))
             or _is_excluded_path(path, root, patterns)
@@ -556,6 +568,28 @@ def _walk_python_files(
 ####
 
 
+def _file_identity(path: Path) -> str:
+    """Return a normalized identity for deduplicating equivalent path spellings."""
+    try:
+        return os.path.normcase(os.fspath(path.resolve(strict=False)))
+    except OSError:
+        return os.path.normcase(os.fspath(path.absolute()))
+    ####
+####
+
+
+def _remember_file(files: dict[str, Path], path: Path) -> None:
+    """Keep one deterministic, preferably relative display path per file."""
+    identity = _file_identity(path)
+    previous = files.get(identity)
+    if previous is None or (path.is_absolute(), os.fspath(path)) < (
+            previous.is_absolute(), os.fspath(previous)
+    ):
+        files[identity] = path
+    ####
+####
+
+
 def discover_python_files(
         paths: Iterable[Path],
         *,
@@ -564,7 +598,7 @@ def discover_python_files(
         use_default_excludes: bool = True,
 ) -> tuple[list[Path], list[str]]:
     """Resolve explicit inputs into deterministic Python files and diagnostics."""
-    files: set[Path] = set()
+    files: dict[str, Path] = {}
     errors: list[str] = []
     includes = tuple(include_patterns)
     patterns = tuple(exclude_patterns)
@@ -577,7 +611,7 @@ def discover_python_files(
                 ):
                     errors.append(f"{path}: expected a .py file or directory")
                 else:
-                    files.add(path)
+                    _remember_file(files, path)
                 ####
                 continue
             ####
@@ -591,11 +625,11 @@ def discover_python_files(
                 ):
                     continue
                 ####
-                files.update(
-                    _walk_python_files(
-                        path, errors, includes, patterns, use_default_excludes
-                    )
-                )
+                for discovered in _walk_python_files(
+                    path, errors, includes, patterns, use_default_excludes
+                ):
+                    _remember_file(files, discovered)
+                ####
                 continue
             ####
             errors.append(f"{path}: path does not exist")
@@ -603,7 +637,7 @@ def discover_python_files(
             errors.append(f"{path}: {error}")
         ####
     ####
-    return sorted(files), errors
+    return sorted(files.values()), errors
 ####
 
 

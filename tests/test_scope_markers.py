@@ -179,9 +179,66 @@ def test_multiline_match_case_capture_named_case_uses_header_indentation() -> No
 ####
 
 
+def test_explicit_match_case_continuation_uses_header_indentation() -> None:
+    source = (
+        "match value:\n"
+        "    case \\\n"
+        "        case:\n"
+        "        pass\n"
+    )
+
+    assert scope_markers.format_source(source) == (
+        "match value:\n"
+        "    case \\\n"
+        "        case:\n"
+        "        pass\n"
+        "    ####\n"
+        "####\n"
+    )
+####
+
+
+def test_large_match_table_uses_stable_case_header_lookup() -> None:
+    source = "match value:\n" + "".join(
+        f"    case {index}:\n        pass\n" for index in range(500)
+    )
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.count("####") == 501
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+def test_long_elif_chain_has_one_boundary_and_is_idempotent() -> None:
+    source = "if value == 0:\n    pass\n" + "".join(
+        f"elif value == {index}:\n    pass\n" for index in range(1, 300)
+    ) + "else:\n    pass\n"
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.count("####") == 1
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+def test_deeply_nested_if_scopes_are_stable() -> None:
+    # CPython rejects indentation nesting beyond 100 levels.
+    depth = 90
+    source = "".join(f"{'    ' * level}if value:\n" for level in range(depth))
+    source += f"{'    ' * depth}pass\n"
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.count("####") == depth
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
 @pytest.mark.parametrize(
     "case_header",
     ("case[1]:", 'case{"key": value}:', "case-1:"),
+    ids=("sequence-pattern", "mapping-pattern", "negative-pattern"),
 )
 def test_punctuation_after_case_soft_keyword_is_supported(case_header: str) -> None:
     source = (
@@ -626,7 +683,10 @@ def test_tabbed_scope_uses_local_indentation_with_detected_marker_style() -> Non
 def test_conflicting_marker_styles_are_reported() -> None:
     source = "def first() -> None:\n    pass\n##\ndef second() -> None:\n    pass\n####\n"
 
-    with pytest.raises(ValueError, match="conflicting standalone marker styles"):
+    with pytest.raises(
+            scope_markers.ScopeMarkersError,
+            match="conflicting standalone marker styles: ##, ####; keep one marker style",
+    ):
         scope_markers.format_source(source)
     ####
 ####
@@ -939,6 +999,32 @@ def test_legacy_python_files_api_deduplicates_and_sorts(tmp_dir: Path) -> None:
     second.write_text("pass\n", encoding="utf-8")
 
     assert scope_markers.python_files([second, first, second]) == [first, second]
+####
+
+
+def test_discovery_deduplicates_relative_and_absolute_root_spellings(tmp_dir: Path) -> None:
+    source = tmp_dir / "module.py"
+    source.write_text("pass\n", encoding="utf-8")
+    relative_root = tmp_dir.relative_to(Path.cwd())
+
+    files, errors = scope_markers.discover_python_files([relative_root, tmp_dir])
+
+    assert files == [relative_root / "module.py"]
+    assert errors == []
+####
+
+
+def test_cli_does_not_emit_duplicate_diff_for_equivalent_roots(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_dir / "module.py"
+    source.write_text("def example():\n    pass\n", encoding="utf-8")
+    relative_root = tmp_dir.relative_to(Path.cwd())
+
+    assert cli.main(["--diff", str(relative_root), str(tmp_dir)]) == 1
+    output = capsys.readouterr().out
+
+    assert output.count("\n@@ ") == 1
 ####
 
 
@@ -1410,6 +1496,18 @@ def test_cli_rejects_unknown_arguments_with_usage_error(
 
     assert exception.value.code == 2
     assert "unrecognized arguments: --not-a-real-option" in capsys.readouterr().err
+####
+
+
+def test_cli_rejects_options_missing_values(
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exception:
+        cli.main(["--include"])
+    ####
+
+    assert exception.value.code == 2
+    assert "argument --include: expected one argument" in capsys.readouterr().err
 ####
 
 
