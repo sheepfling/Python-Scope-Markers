@@ -9,13 +9,14 @@ runtime dependencies.
 
 The package is intentionally layered:
 
-- `scope_markers.__init__` exposes the stable Python API;
+- `scope_markers.__init__` is intentionally kept minimal;
 - `scope_markers._implementation` contains formatting, discovery, and file operations;
 - `scope_markers.cli` owns command-line parsing and command behavior;
 - `scope_markers.__main__` provides `python -m scope_markers`.
 
 New CLI options or commands should be added to `cli.py`; new formatter behavior
-belongs in `_implementation.py`. Keep `__init__.py` limited to public exports.
+belongs in `_implementation.py`. Import implementation APIs from their owning
+module rather than relying on package-level re-exports.
 
 ## Quick use
 

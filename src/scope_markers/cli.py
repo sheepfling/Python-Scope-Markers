@@ -19,6 +19,7 @@ from ._implementation import (
     write_atomic,
 )
 
+
 def _unified_diff(inspection: FileInspection) -> str:
     source = inspection.source
     formatted = inspection.formatted

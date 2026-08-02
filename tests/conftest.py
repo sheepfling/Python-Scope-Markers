@@ -4,11 +4,13 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+
 @pytest.fixture
-def tmp_path() -> Iterator[Path]:
+def tmp_dir() -> Iterator[Path]:
     """Provide test directories inside the repository instead of global temp."""
-    repository_root = Path(__file__).resolve().parents[1]
-    with TemporaryDirectory(prefix=".pytest-tmp-", dir=repository_root) as directory:
+    repo_tmp = Path(__file__).resolve().parents[1] / '.tmp'
+    repo_tmp.mkdir(exist_ok=True, parents=True)
+    with TemporaryDirectory(prefix="pytest-", dir=repo_tmp) as directory:
         yield Path(directory)
     ####
 ####

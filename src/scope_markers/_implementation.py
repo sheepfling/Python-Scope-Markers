@@ -67,6 +67,7 @@ COMPOUND_STATEMENTS: Final = (
     ast.Match,
 )
 
+
 @dataclass(frozen=True, slots=True)
 class ScopeBoundary:
     """One canonical marker insertion point."""
@@ -396,6 +397,8 @@ def _matches_exclude(path: Path, root: Path, patterns: tuple[str, ...]) -> bool:
 
 def _is_generated_root(path: Path) -> bool:
     return any(part.casefold() in SKIP_DIRECTORY_NAMES for part in path.resolve().parts)
+####
+
 
 def _is_skipped_directory(name: str) -> bool:
     return name.casefold() in SKIP_DIRECTORY_NAMES
@@ -411,7 +414,6 @@ def _walk_python_files(
 
     def on_error(error: OSError) -> None:
         errors.append(f"{root}: {error}")
-
     ####
 
     for directory, names, filenames in os.walk(root, followlinks=False, onerror=on_error):
