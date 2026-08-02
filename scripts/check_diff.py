@@ -50,7 +50,6 @@ DIFF_CASES: tuple[tuple[str, Path, bytes], ...] = (
 )
 AUTOCRLF_MODES = ("false", "true", "input")
 
-
 def _run_diff_case(git: str, name: str, relative: Path, source: bytes) -> str | None:
     with TemporaryDirectory(prefix=f"scope-markers-diff-{name}-") as raw:
         root = Path(raw)
@@ -103,7 +102,7 @@ def _run_diff_case(git: str, name: str, relative: Path, source: bytes) -> str | 
 ####
 
 
-def _check_bare_cr(git: str) -> str | None:
+def _check_bare_cr() -> str | None:
     with TemporaryDirectory(prefix="scope-markers-diff-bare-cr-") as raw:
         root = Path(raw)
         path = root / "example.py"
@@ -383,7 +382,7 @@ def main() -> int:
         print(f"diff contract failed for autocrlf modes: {failure}", file=sys.stderr)
         return 1
     ####
-    failure = _check_bare_cr(git)
+    failure = _check_bare_cr()
     if failure is not None:
         print(f"diff contract failed for bare-CR input: {failure}", file=sys.stderr)
         return 1

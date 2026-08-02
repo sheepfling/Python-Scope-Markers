@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+# noinspection PyProtectedMember
 from scope_markers import _diff, api, cli
 
 
@@ -35,9 +36,10 @@ def test_cli_diff_uses_shared_root_without_git(
         "def example():\n    pass\n", encoding="utf-8"
     )
 
-    def no_repository_root(start: Path) -> None:
+    def no_repository_root(_start: Path) -> None:
         return None
     ####
+
 
     monkeypatch.setattr(  # pyright: ignore[reportPrivateUsage]
         _diff, "_repository_root", no_repository_root
@@ -53,7 +55,7 @@ def test_cli_diff_uses_shared_root_without_git(
 ####
 
 
-def test_diff_quotes_surrogateescaped_path_bytes() -> None:
+def test_diff_quotes_surrogate_escaped_path_bytes() -> None:
     path = "a/\udcff.py"
     raw = os.fsencode(path)
 
@@ -68,18 +70,20 @@ def test_diff_quotes_surrogateescaped_path_bytes() -> None:
 @pytest.mark.parametrize(
     ("filename", "header"),
     (
-        ("space name.py", "--- a/space name.py\n"),
-        ('quote"name.py', '--- "a/quote\\"name.py"\n'),
-        ("tab\tname.py", '--- "a/tab\\tname.py"\n'),
-        ("line\nbreak.py", '--- "a/line\\nbreak.py"\n'),
-        ("emoji-😀.py", '--- "a/emoji-\\360\\237\\230\\200.py"\n'),
+            ("space name.py", "--- a/space name.py\n"),
+            ('quote"name.py', '--- "a/quote\\"name.py"\n'),
+            ("tab\tname.py", '--- "a/tab\\tname.py"\n'),
+            ("line\nbreak.py", '--- "a/line\\nbreak.py"\n'),
+            ("emoji-😀.py", '--- "a/emoji-\\360\\237\\230\\200.py"\n'),
     ),
 )
 def test_diff_quotes_path_metadata_for_pathological_names(
-        filename: str, header: str
+        filename: str,
+        header: str,
 ) -> None:
+    path = Path(__file__).resolve().parents[1] / filename
     inspection = api.FileInspection(
-        path=Path(filename),
+        path=path,
         source="value = 1\n",
         formatted="value = 2\n",
         encoding="utf-8",
@@ -258,9 +262,9 @@ def test_cli_diff_uses_repository_relative_labels_from_subdirectories(
 @pytest.mark.parametrize(
     ("filename", "data"),
     (
-        ("utf8.py", b"# coding: utf-8\ndef example():\n    value = 'h\xc3\xa9llo'\n"),
-        ("cp1252.py", b"# coding: cp1252\ndef example():\n    value = 'h\xe9llo'\n"),
-        ("bom.py", b"\xef\xbb\xbfdef example():\n    pass\n"),
+            ("utf8.py", b"# coding: utf-8\ndef example():\n    value = 'h\xc3\xa9llo'\n"),
+            ("cp1252.py", b"# coding: cp1252\ndef example():\n    value = 'h\xe9llo'\n"),
+            ("bom.py", b"\xef\xbb\xbfdef example():\n    pass\n"),
     ),
 )
 def test_cli_diff_preserves_source_encoding_for_git(

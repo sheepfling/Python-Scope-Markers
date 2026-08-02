@@ -10,11 +10,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-
 def ci_commands(
-    python: str = sys.executable,
-    *,
-    fix: bool = False,
+        python: str = sys.executable,
+        *,
+        fix: bool = False,
 ) -> tuple[tuple[str, ...], ...]:
     """Return the ordered, platform-independent commands used by CI."""
     ruff = (python, "-m", "ruff", "check")

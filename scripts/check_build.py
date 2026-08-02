@@ -9,7 +9,6 @@ from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 
-
 def main() -> int:
     """Verify wheel packaging without reusing stale distribution artifacts."""
     with TemporaryDirectory(prefix="scope-markers-wheel-") as output:

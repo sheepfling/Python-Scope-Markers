@@ -8,7 +8,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-
 def main() -> int:
     """Run Pyright with the interpreter that owns the development tools."""
     return subprocess.run(

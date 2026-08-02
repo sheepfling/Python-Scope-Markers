@@ -86,12 +86,13 @@ a full code formatter; when using one, run it before scope markers.
 
 Diff output preserves LF and CRLF records and includes explicit markers for a
 missing final newline. `--diff` rejects changed files with bare-CR line endings
-because unified-diff tools cannot apply those physical boundaries; use `--fix`
-or convert such files to LF or CRLF first. Patch labels are normalized relative
-to the enclosing Git worktree (or a safe shared root outside Git), and unusual
-names such as spaces, tabs, newlines, quotes, and non-UTF-8 path bytes are
-quoted independently from the source-file encoding so Git can consume the
-patch.
+because unified-diff tools cannot apply those physical boundaries. Use `--fix`
+or convert such files to LF or CRLF first.
+
+Patch labels are normalized relative to the enclosing Git worktree, or to a
+safe shared root outside Git. Unusual names—such as spaces, tabs, newlines,
+quotes, and non-UTF-8 path bytes—are quoted separately from the source-file
+encoding so Git can consume the patch.
 
 The default check scans every discovered file so CI can report all required
 changes. Use `--fail-fast` for a quick local check that stops after the first
@@ -350,17 +351,17 @@ scope-markers --fix src tests scripts
 
 The complete validation roles are:
 
-| Tool                | Command                         | Purpose                                                                   |
-|---------------------|---------------------------------|---------------------------------------------------------------------------|
-| Ruff                | `ruff check src scripts tests`  | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
-| Diff contract       | `python scripts/check_diff.py` | Verify emitted patches with Git across newline and encoding cases       |
-| Black               | `black src tests scripts`       | Ordinary Python formatting before markers                                 |
-| Black compatibility | `python scripts/check_black.py` | Black format/check smoke test with standalone markers removed             |
-| Flake8              | `flake8 src scripts tests`      | Compatibility lint pass using `.flake8`                                   |
-| Pyright             | `python scripts/check_pyright.py` | Strict type checking for `src`, `scripts`, and `tests`                   |
-| Pytest              | `pytest -q`                     | Regression test suite                                                     |
-| Build               | `python scripts/check_build.py` | Wheel packaging check                                                     |
-| Scope markers       | `scope-markers src scripts tests` | Project-specific marker check                                           |
+| Tool                | Command                           | Purpose                                                                   |
+|---------------------|-----------------------------------|---------------------------------------------------------------------------|
+| Ruff                | `ruff check src scripts tests`    | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
+| Diff contract       | `python scripts/check_diff.py`    | Verify emitted patches with Git across newline and encoding cases         |
+| Black               | `black src tests scripts`         | Ordinary Python formatting before markers                                 |
+| Black compatibility | `python scripts/check_black.py`   | Black format/check smoke test with standalone markers removed             |
+| Flake8              | `flake8 src scripts tests`        | Compatibility lint pass using `.flake8`                                   |
+| Pyright             | `python scripts/check_pyright.py` | Strict type checking for `src`, `scripts`, and `tests`                    |
+| Pytest              | `pytest -q`                       | Regression test suite                                                     |
+| Build               | `python scripts/check_build.py`   | Wheel packaging check                                                     |
+| Scope markers       | `scope-markers src scripts tests` | Project-specific marker check                                             |
 
 Ruff's annotation rules require parameters and return values to be annotated for
 new functions, methods, and test helpers. Pyright then type-checks the package

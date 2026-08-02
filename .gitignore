@@ -217,4 +217,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .idea/
+
+# Temporary
 inbox/
+tmp/
+.tmp/
+temp/
+.temp/

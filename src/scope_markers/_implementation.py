@@ -151,6 +151,7 @@ def _byte_line_reader(data: bytes) -> Callable[[], bytes]:
         return line
     ####
 
+
     return readline
 ####
 
@@ -262,6 +263,7 @@ def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
         ####
         return f"{line[: -len(ending)]}\n"
     ####
+
 
     return tokenize.generate_tokens(readline)
 ####
@@ -567,6 +569,126 @@ def _block_indentation_depths(lines: Sequence[str], source: str) -> dict[str, in
 ####
 
 
+def _logical_statement_depths(source: str) -> dict[int, int]:
+    """Return tokenizer-recognized block depth for each logical statement line."""
+    depths: dict[int, int] = {}
+    depth = 0
+    at_statement_start = True
+    for token in _token_stream(source):
+        if token.type == tokenize.INDENT:
+            depth += 1
+            continue
+        ####
+        if token.type == tokenize.DEDENT:
+            depth -= 1
+            continue
+        ####
+        if token.type == tokenize.NEWLINE:
+            at_statement_start = True
+            continue
+        ####
+        if token.type in (tokenize.COMMENT, tokenize.NL, tokenize.ENDMARKER):
+            continue
+        ####
+        if at_statement_start:
+            depths[token.start[0]] = depth
+        ####
+        at_statement_start = False
+    ####
+    return depths
+####
+
+
+def _compound_header_lines(tree: ast.AST, lines: Sequence[str]) -> set[int]:
+    """Return physical lines that begin compound statements or clauses."""
+    headers = {
+        candidate.lineno
+        for candidate in ast.walk(tree)
+        if isinstance(candidate, ast.stmt) and isinstance(candidate, COMPOUND_STATEMENTS)
+    }
+    headers.update(_match_case_header_lines(lines))
+    at_statement_start = True
+    for token in _token_stream("".join(lines)):
+        if (
+                token.type == tokenize.NAME
+                and token.string in {"else", "except", "finally"}
+                and at_statement_start
+        ):
+            headers.add(token.start[0])
+        ####
+        if token.type == tokenize.NEWLINE:
+            at_statement_start = True
+        elif token.type not in (
+                tokenize.INDENT,
+                tokenize.DEDENT,
+                tokenize.COMMENT,
+                tokenize.NL,
+        ):
+            at_statement_start = False
+        ####
+    ####
+    return headers
+####
+
+
+def _inline_suite_header_lines(source: str, header_lines: set[int]) -> set[int]:
+    """Return headers whose suite continues on the same physical line."""
+    tokens_by_line: dict[int, list[tokenize.TokenInfo]] = {}
+    for token in _token_stream(source):
+        if token.start[0] in header_lines:
+            tokens_by_line.setdefault(token.start[0], []).append(token)
+        ####
+    ####
+    inline_headers: set[int] = set()
+    ignored = {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.ENDMARKER}
+    for row, tokens in tokens_by_line.items():
+        last_colon = max(
+            (
+                index
+                for index, token in enumerate(tokens)
+                if token.type == tokenize.OP and token.string == ":"
+            ),
+            default=-1,
+        )
+        if last_colon >= 0 and any(token.type not in ignored for token in tokens[last_colon + 1:]):
+            inline_headers.add(row)
+        ####
+    ####
+    return inline_headers
+####
+
+
+def _inline_suite_comment_depths(
+        tree: ast.AST, lines: Sequence[str], statement_depths: Mapping[int, int]
+) -> dict[int, int]:
+    """Infer virtual child depth for comments after inline compound suites."""
+    comments: dict[int, int] = {}
+    source = "".join(lines)
+    headers = _inline_suite_header_lines(source, _compound_header_lines(tree, lines))
+    for row in headers:
+        depth = statement_depths.get(row)
+        if depth is None:
+            continue
+        ####
+        header_width = _indentation_width(_indentation_prefix(lines[row - 1]))
+        for comment_row in range(row + 1, len(lines) + 1):
+            line = _line_body(lines[comment_row - 1])
+            if not line.strip(" \t\f"):
+                continue
+            ####
+            prefix = _indentation_prefix(line)
+            if not line[len(prefix):].startswith("#"):
+                break
+            ####
+            if _indentation_width(prefix) > header_width:
+                comments[comment_row] = depth + 1
+            ####
+        ####
+    ####
+    return comments
+####
+
+
 def _replace_indentation(line: str, indentation: str) -> str:
     prefix = _indentation_prefix(line)
     return f"{indentation}{line[len(prefix):]}"
@@ -581,6 +703,9 @@ def _reindent_source(source: str, indent_width: int) -> str:
     original_tree = ast.parse(source)
     lines = _physical_lines(source)
     prefix_depths = _block_indentation_depths(lines, source)
+    inline_comment_depths = _inline_suite_comment_depths(
+        original_tree, lines, _logical_statement_depths(source)
+    )
     depth = 0
     at_statement_start = True
     for token in _token_stream(source):
@@ -600,7 +725,7 @@ def _reindent_source(source: str, indent_width: int) -> str:
             row = token.start[0]
             if 1 <= row <= len(lines):
                 prefix = _indentation_prefix(lines[row - 1])
-                comment_depth = prefix_depths.get(prefix)
+                comment_depth = inline_comment_depths.get(row, prefix_depths.get(prefix))
                 if comment_depth is not None:
                     lines[row - 1] = _replace_indentation(
                         lines[row - 1], " " * (indent_width * comment_depth)
@@ -728,9 +853,9 @@ def _is_supported_source_file(
         include_stubs: bool,
 ) -> bool:
     return (
-        path.suffix.casefold() == ".py"
-        or (include_stubs and path.suffix.casefold() == ".pyi")
-        or _matches_pattern(path, root, include_patterns)
+            path.suffix.casefold() == ".py"
+            or (include_stubs and path.suffix.casefold() == ".pyi")
+            or _matches_pattern(path, root, include_patterns)
     )
 ####
 
@@ -811,9 +936,24 @@ def _remember_file(files: dict[str, Path], path: Path) -> None:
     """Keep one deterministic, preferably relative display path per file."""
     identity = _file_identity(path)
     previous = files.get(identity)
-    if previous is None or (path.is_absolute(), os.fspath(path)) < (
-            previous.is_absolute(), os.fspath(previous)
-    ):
+
+    if previous is None:
+        files[identity] = path
+        return
+    ####
+
+    path_is_absolute = path.is_absolute()
+    previous_is_absolute = previous.is_absolute()
+
+    is_preferred = (
+                           previous_is_absolute
+                           and not path_is_absolute
+                   ) or (
+                           path_is_absolute == previous_is_absolute
+                           and os.fspath(path) < os.fspath(previous)
+                   )
+
+    if is_preferred:
         files[identity] = path
     ####
 ####
@@ -858,12 +998,12 @@ def discover_python_files(
                     continue
                 ####
                 for discovered in _walk_python_files(
-                    path,
-                    errors,
-                    includes,
-                    patterns,
-                    use_default_excludes,
-                    include_stubs,
+                        path,
+                        errors,
+                        includes,
+                        patterns,
+                        use_default_excludes,
+                        include_stubs,
                 ):
                     _remember_file(files, discovered)
                 ####

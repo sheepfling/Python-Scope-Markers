@@ -13,7 +13,7 @@ import pytest
 
 import scope_markers as package
 from scope_markers import api, cli
-from scripts import check_black, ci
+from scripts import check_black, check_diff, ci
 
 # Literal ``####`` values intentionally verify the formatter's defining output.
 scope_markers = api
@@ -192,6 +192,81 @@ def test_indent_width_handles_mixed_indentation_with_continuations_and_match_cas
         "    ####\n"
         "  except ValueError:\n"
         "    return -1\n"
+        "  ####\n"
+        "####\n"
+    )
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_indent_width_normalizes_comments_after_one_line_suites(newline: str) -> None:
+    source = (
+        "if enabled: pass\n"
+        "    # Attached to the one-line suite.\n"
+        "next_value = 1\n"
+    ).replace("\n", newline)
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "if enabled: pass\n"
+        "  # Attached to the one-line suite.\n"
+        "####\n"
+        "next_value = 1\n"
+    ).replace("\n", newline)
+####
+
+
+def test_inline_comment_depth_overrides_a_matching_nested_prefix() -> None:
+    source = (
+        "if inline: pass\n"
+        "    # Attached to the inline suite, not the later nested block.\n"
+        "if outer:\n"
+        "  if inner:\n"
+        "    pass\n"
+    )
+
+    formatted = scope_markers.format_source(source, indent_width=2)
+
+    assert formatted.startswith(
+        "if inline: pass\n"
+        "  # Attached to the inline suite, not the later nested block.\n"
+        "####\n"
+    )
+    assert scope_markers.format_source(formatted, indent_width=2) == formatted
+####
+
+
+def test_indent_width_normalizes_comments_after_inline_clause_headers() -> None:
+    source = (
+        "try: pass\n"
+        "except ValueError: pass\n"
+        "    # Attached to the except suite.\n"
+        "next_value = 1\n"
+    )
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "try: pass\n"
+        "except ValueError: pass\n"
+        "  # Attached to the except suite.\n"
+        "####\n"
+        "next_value = 1\n"
+    )
+####
+
+
+def test_indent_width_normalizes_comments_after_inline_match_cases() -> None:
+    source = (
+        "match value:\n"
+        "  case 1: pass\n"
+        "    # Attached to the case suite.\n"
+        "  case _: pass\n"
+    )
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "match value:\n"
+        "  case 1: pass\n"
+        "    # Attached to the case suite.\n"
+        "  ####\n"
+        "  case _: pass\n"
         "  ####\n"
         "####\n"
     )
@@ -441,8 +516,8 @@ def test_standalone_markers_are_recognized_with_all_newline_conventions(
 @pytest.mark.parametrize(
     "source",
     (
-        "if first:\n    pass\n\felif second:\n    pass\n",
-        "\fif first:\n    pass\nelif second:\n    pass\n",
+            "if first:\n    pass\n\felif second:\n    pass\n",
+            "\fif first:\n    pass\nelif second:\n    pass\n",
     ),
 )
 def test_elif_chain_uses_effective_form_feed_indentation(source: str) -> None:
@@ -705,6 +780,39 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
 ####
 
 
+def test_check_diff_main_calls_the_bare_cr_check_without_git_argument(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the standalone bare-CR check's signature aligned with main."""
+    called = False
+
+    def find_git(_command: str) -> str:
+        return "git"
+    ####
+
+    def no_failure(*_args: object, **_kwargs: object) -> None:
+        return None
+    ####
+
+    def check_bare_cr() -> None:
+        nonlocal called
+        called = True
+    ####
+
+
+    monkeypatch.setattr(check_diff.shutil, "which", find_git)
+    monkeypatch.setattr(check_diff, "_run_diff_case", no_failure)
+    monkeypatch.setattr(check_diff, "_check_subdirectory_path", no_failure)
+    monkeypatch.setattr(check_diff, "_check_multiple_file_output", no_failure)
+    monkeypatch.setattr(check_diff, "_check_autocrlf_modes", no_failure)
+    monkeypatch.setattr(check_diff, "_check_bare_cr", check_bare_cr)
+    monkeypatch.setattr(check_diff, "_check_newline_filename", no_failure)
+
+    assert check_diff.main() == 0
+    assert called
+####
+
+
 def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
     assert ci.ci_commands("python311", fix=True) == (
         ("python311", "-m", "pytest", "-q"),
@@ -736,10 +844,12 @@ def test_ci_main_runs_all_commands_in_order(monkeypatch: pytest.MonkeyPatch) -> 
         return commands
     ####
 
+
     def record_command(command: tuple[str, ...]) -> int:
         called.append(command)
         return 0
     ####
+
 
     monkeypatch.setattr(ci, "ci_commands", fake_ci_commands)
     monkeypatch.setattr(ci, "run_command", record_command)
@@ -757,9 +867,11 @@ def test_ci_main_forwards_fix_option(monkeypatch: pytest.MonkeyPatch) -> None:
         return ()
     ####
 
-    def successful_command(command: tuple[str, ...]) -> int:
+
+    def successful_command(_command: tuple[str, ...]) -> int:
         return 0
     ####
+
 
     monkeypatch.setattr(
         ci,
@@ -774,12 +886,15 @@ def test_ci_main_forwards_fix_option(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_ci_run_command_reports_startup_errors(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fail_to_start(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fail_to_start(
+            *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
         raise FileNotFoundError("command not found")
     ####
+
 
     monkeypatch.setattr(ci.subprocess, "run", fail_to_start)
 
@@ -807,7 +922,7 @@ def test_ci_main_stops_and_returns_the_first_failure(monkeypatch: pytest.MonkeyP
 
 
 def test_flake8_configuration_allows_marker_and_black_compatible_syntax(
-    tmp_path: Path,
+        tmp_path: Path,
 ) -> None:
     source = (
         "def first(values: list[int]) -> list[int]:\n"
@@ -1363,7 +1478,7 @@ def test_legacy_python_files_api_deduplicates_and_sorts(tmp_path: Path) -> None:
 def test_discovery_deduplicates_relative_and_absolute_root_spellings(tmp_path: Path) -> None:
     source = tmp_path / "module.py"
     source.write_text("pass\n", encoding="utf-8")
-    relative_root = tmp_path.relative_to(Path.cwd())
+    relative_root = Path(os.path.relpath(tmp_path, Path.cwd()))
 
     files, errors = scope_markers.discover_python_files([relative_root, tmp_path])
 
@@ -1377,7 +1492,7 @@ def test_cli_does_not_emit_duplicate_diff_for_equivalent_roots(
 ) -> None:
     source = tmp_path / "module.py"
     source.write_text("def example():\n    pass\n", encoding="utf-8")
-    relative_root = tmp_path.relative_to(Path.cwd())
+    relative_root = Path(os.path.relpath(tmp_path, Path.cwd()))
 
     assert cli.main(["--diff", str(relative_root), str(tmp_path)]) == 1
     output = capsys.readouterr().out
