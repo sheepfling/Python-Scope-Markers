@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import sys
+from contextlib import suppress
 from importlib.metadata import entry_points
 from importlib.metadata import version as installed_version
 from pathlib import Path
@@ -250,7 +251,7 @@ def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
     assert ci.ci_commands("python311") == (
         ("python311", "-m", "pytest", "-q"),
         ("python311", "-m", "ruff", "check", "."),
-        ("python311", "-m", "ruff", "format", "--check", "."),
+        ("python311", "-m", "flake8", "src", "scripts", "tests"),
         ("python311", "-m", "pyright"),
         ("python311", "-m", "build", "--wheel"),
         ("scope-markers", "scripts"),
@@ -689,10 +690,8 @@ def test_recursive_discovery_skips_symlinked_files_and_generated_directories(
     generated.mkdir()
     (generated / "ignored.py").write_text("pass\n", encoding="utf-8")
     link = tmp_path / "linked.py"
-    try:
+    with suppress(OSError):
         link.symlink_to(source)
-    except OSError:
-        pass
     ####
 
     files, errors = scope_markers.discover_python_files([tmp_path])

@@ -15,7 +15,7 @@ def ci_commands(python: str = sys.executable) -> tuple[tuple[str, ...], ...]:
     return (
         (python, "-m", "pytest", "-q"),
         (python, "-m", "ruff", "check", "."),
-        (python, "-m", "ruff", "format", "--check", "."),
+        (python, "-m", "flake8", "src", "scripts", "tests"),
         (python, "-m", "pyright"),
         (python, "-m", "build", "--wheel"),
         ("scope-markers", "scripts"),

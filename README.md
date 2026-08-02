@@ -50,6 +50,53 @@ scope-markers --fix src tests scripts
 Ruff does not know this project-specific marker convention, so running Ruff after
 scope markers may move surrounding code without restoring the markers.
 
+## Using scope markers with downstream tooling
+
+Treat scope-marker insertion as the final formatting stage for any files that
+contain markers. A downstream pipeline should use this order:
+
+```text
+1. Ruff check --fix, or another linter's autofixes
+2. Ruff format or Black
+3. scope-markers --fix
+4. Flake8, Pyright, tests, and packaging checks
+```
+
+Do not run Ruff format or Black after `scope-markers --fix`. Both formatters
+interpret `####` as an ordinary comment and may normalize the blank lines around
+markers or rewrite multiline string literals. There is no formatter rule that
+makes them understand `####` as a scope boundary. If a downstream editor runs
+format-on-save, configure it to run before scope-marker insertion or exclude
+marker-managed files from that formatter.
+
+Flake8 can run after marker insertion. Match this project's settings if you want
+consistent results: use a 100-character line limit and ignore `E203`, while
+excluding virtual environments, build outputs, and cache directories. The
+repository's `.flake8` file is a ready-to-copy example.
+
+For pre-commit, place the ordinary formatter hooks before the scope-marker hook:
+
+```yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: <your-ruff-version>
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: scope-markers
+        name: scope markers
+        entry: scope-markers --fix
+        language: system
+        types: [python]
+```
+
+If files already contain scope markers, run the ordinary formatter once before
+enabling the marker hook. Subsequent changes should flow through the same order
+to avoid formatter churn.
+
 ## Marker style detection
 
 The formatter recognizes exact standalone `##` and `####` comments. If a file
@@ -162,11 +209,37 @@ repos:
 python -m pip install -e ".[dev]"
 pytest -q
 ruff check .
-ruff format --check .
+flake8 src scripts tests
 pyright
 python -m build --wheel
 scope-markers .
 ```
+
+For ordinary Python formatting, run Black before applying the project-specific
+scope markers:
+
+```bash
+black src tests scripts
+scope-markers --fix src tests scripts
+```
+
+The complete validation roles are:
+
+| Tool | Command | Purpose |
+| --- | --- | --- |
+| Ruff | `ruff check .` | Fast linting and autofix-compatible diagnostics |
+| Black | `black src tests scripts` | Ordinary Python formatting before markers |
+| Flake8 | `flake8 src scripts tests` | Compatibility lint pass using `.flake8` |
+| Pyright | `pyright` | Strict type checking for `src` and `scripts` |
+| Pytest | `pytest -q` | Regression test suite |
+| Build | `python -m build --wheel` | Wheel packaging check |
+| Scope markers | `scope-markers .` | Project-specific marker check |
+
+Black is intentionally not run as a post-marker `--check`: Black and Ruff both
+normalize the whitespace and multiline strings around the required `####`
+markers. Flake8 is safe to run after markers because its project configuration
+matches the repository's line length and ignores the formatter-incompatible
+`E203` rule.
 
 The complete local/CI check sequence is also available as one command:
 
