@@ -65,6 +65,7 @@ def main() -> int:
         formatted = subprocess.run(format_command, cwd=ROOT, check=False)
         if formatted.returncode:
             return formatted.returncode
+        ####
         check_command = [*format_command, "--check"]
         return subprocess.run(check_command, cwd=ROOT, check=False).returncode
     ####
