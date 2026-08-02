@@ -58,6 +58,13 @@ def _is_missing_final_newline(
         formatted_final_line: str | None,
 ) -> bool:
     if not line or line[0] not in "-+":
+        if line and line[0] == " ":
+            return (
+                source_final_line is not None
+                and formatted_final_line is not None
+                and line[1:] == source_final_line == formatted_final_line
+            )
+        ####
         return False
     ####
     expected = source_final_line if line[0] == "-" else formatted_final_line

@@ -339,7 +339,12 @@ def _match_case_header_lines(lines: Sequence[str]) -> list[int]:
         # only NEWLINE can begin another clause header.
         if token.type == tokenize.NEWLINE:
             at_statement_start = True
-        elif token.type not in (tokenize.INDENT, tokenize.DEDENT):
+        elif token.type not in (
+                tokenize.INDENT,
+                tokenize.DEDENT,
+                tokenize.COMMENT,
+                tokenize.NL,
+        ):
             at_statement_start = False
         ####
     ####

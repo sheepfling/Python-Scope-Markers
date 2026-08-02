@@ -198,6 +198,44 @@ def test_explicit_match_case_continuation_uses_header_indentation() -> None:
 ####
 
 
+def test_match_case_header_after_comment_is_detected() -> None:
+    source = (
+        "match value:\n"
+        "    # Cases follow this explanation.\n"
+        "    case 1:\n"
+        "        pass\n"
+    )
+
+    assert scope_markers.format_source(source).endswith(
+        "    case 1:\n"
+        "        pass\n"
+        "    ####\n"
+        "####\n"
+    )
+####
+
+
+def test_nested_match_case_header_after_comment_uses_inner_indentation() -> None:
+    source = (
+        "match outer:\n"
+        "    case 1:\n"
+        "        match inner:\n"
+        "            # Inner cases follow this explanation.\n"
+        "            case 2:\n"
+        "                pass\n"
+    )
+
+    assert scope_markers.format_source(source).endswith(
+        "            case 2:\n"
+        "                pass\n"
+        "            ####\n"
+        "        ####\n"
+        "    ####\n"
+        "####\n"
+    )
+####
+
+
 def test_large_match_table_uses_stable_case_header_lookup() -> None:
     source = "match value:\n" + "".join(
         f"    case {index}:\n        pass\n" for index in range(500)
@@ -1363,6 +1401,19 @@ def test_cli_diff_marks_a_missing_final_newline(
 
     assert "-    pass\n\\ No newline at end of file\n+    pass\n" in output
     assert "-    pass+    pass" not in output
+####
+
+
+def test_cli_diff_marks_missing_newline_on_unchanged_context_line(
+        tmp_dir: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_dir / "context-no-final-newline.py"
+    path.write_bytes(b"if x:\n    pass\nx = 1")
+
+    assert cli.main(["--diff", str(path)]) == 1
+    output = capsys.readouterr().out
+
+    assert " x = 1\n\\ No newline at end of file\n" in output
 ####
 
 
