@@ -45,7 +45,8 @@ def test_nested_scopes_are_closed_inside_out() -> None:
 ####
 
 
-def test_all_compound_statement_families_are_supported() -> None:
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_all_compound_statement_families_are_supported(newline: str) -> None:
     source = (
         "async def worker(items: object) -> None:\n"
         "    async for item in items:\n"
@@ -68,7 +69,7 @@ def test_all_compound_statement_families_are_supported() -> None:
         "    pass\n"
         "if ready:\n"
         "    pass\n"
-    )
+    ).replace("\n", newline)
 
     formatted = scope_markers.format_source(source)
 
@@ -198,20 +199,84 @@ def test_explicit_match_case_continuation_uses_header_indentation() -> None:
 ####
 
 
-def test_match_case_header_after_comment_is_detected() -> None:
-    source = (
-        "match value:\n"
-        "    # Cases follow this explanation.\n"
-        "    case 1:\n"
-        "        pass\n"
-    )
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_match_case_header_after_comment_is_detected(newline: str) -> None:
+    source = newline.join(
+        (
+            "match value:",
+            "    # Cases follow this explanation.",
+            "    case 1:",
+            "        pass",
+        )
+    ) + newline
 
     assert scope_markers.format_source(source).endswith(
-        "    case 1:\n"
-        "        pass\n"
-        "    ####\n"
-        "####\n"
+        f"    case 1:{newline}"
+        f"        pass{newline}"
+        f"    ####{newline}"
+        f"####{newline}"
     )
+####
+
+
+def test_cli_fix_accepts_bare_cr_match_statements(tmp_path: Path) -> None:
+    path = tmp_path / "bare-cr-match.py"
+    path.write_bytes(b"match value:\r    case 1:\r        pass\r")
+
+    assert cli.main(["--fix", "--quiet", str(path)]) == 0
+    assert path.read_bytes() == (
+        b"match value:\r    case 1:\r        pass\r    ####\r####\r"
+    )
+####
+
+
+def test_cli_fix_detects_a_bare_cr_encoding_cookie(tmp_path: Path) -> None:
+    path = tmp_path / "bare-cr-cp1252.py"
+    path.write_bytes(
+        b"# coding: cp1252\r"
+        b"match value:\r"
+        b"    case 1:\r"
+        b"        label = '\xe9'\r"
+    )
+
+    assert cli.main(["--fix", "--quiet", str(path)]) == 0
+    assert path.read_bytes() == (
+        b"# coding: cp1252\r"
+        b"match value:\r"
+        b"    case 1:\r"
+        b"        label = '\xe9'\r"
+        b"    ####\r"
+        b"####\r"
+    )
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_standalone_markers_are_recognized_with_all_newline_conventions(
+        newline: str,
+) -> None:
+    source = (
+        f"def example() -> None:{newline}"
+        f"    pass{newline}"
+        f"####{newline}"
+    )
+
+    assert scope_markers.format_source(source) == source
+####
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "if first:\n    pass\n\felif second:\n    pass\n",
+        "\fif first:\n    pass\nelif second:\n    pass\n",
+    ),
+)
+def test_elif_chain_uses_effective_form_feed_indentation(source: str) -> None:
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.count("####") == 1
+    assert scope_markers.format_source(formatted) == formatted
 ####
 
 
@@ -1104,7 +1169,7 @@ def test_discovery_reports_missing_and_non_python_explicit_paths(tmp_path: Path)
     assert files == []
     assert len(errors) == 2
     assert "does not exist" in errors[0]
-    assert "expected a .py file" in errors[1]
+    assert "expected a supported source file" in errors[1]
 ####
 
 
@@ -1312,6 +1377,31 @@ def test_discovery_include_patterns_allow_python_compatible_extensions(tmp_path:
     assert errors == []
     assert cli.main(["--include", "*.bzl", "--fix", "--quiet", str(tmp_path)]) == 0
     assert starlark.read_text(encoding="utf-8").endswith("####\n")
+####
+
+
+def test_stub_discovery_and_formatting_require_mark_stubs_opt_in(tmp_path: Path) -> None:
+    stub = tmp_path / "interfaces.pyi"
+    stub.write_text("def connect() -> None: ...\n", encoding="utf-8")
+
+    files, errors = api.discover_python_files([tmp_path])
+    assert files == []
+    assert errors == []
+
+    files, errors = api.discover_python_files([stub])
+    assert files == []
+    assert errors == [f"{stub}: expected a supported source file or directory"]
+
+    files, errors = api.discover_python_files([tmp_path], include_stubs=True)
+    assert files == [stub]
+    assert errors == []
+    assert api.python_files([stub], include_stubs=True) == [stub]
+
+    assert cli.main(["--fix", "--quiet", str(tmp_path)]) == 0
+    assert stub.read_text(encoding="utf-8") == "def connect() -> None: ...\n"
+
+    assert cli.main(["--mark-stubs", "--fix", "--quiet", str(tmp_path)]) == 0
+    assert stub.read_text(encoding="utf-8") == "def connect() -> None: ...\n####\n"
 ####
 
 

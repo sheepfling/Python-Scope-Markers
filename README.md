@@ -50,7 +50,7 @@ virtual-environment, cache, dependency, and build directories are pruned.
 Supplying multiple files or directories is supported. A supplied root that is
 itself, or is inside, a generated directory such as `build`, `.venv`, or
 `node_modules` is skipped. Explicitly naming a `.py` file bypasses directory
-pruning and custom excludes.
+pruning and custom excludes. Use `--mark-stubs` to include `.pyi` files.
 
 The default directory exclusions include common VCS, virtual-environment,
 cache, build, and dependency directories such as `.git`, `.venv`, `.uv-cache`,
@@ -66,7 +66,7 @@ returns exit status `1` without changing them. Use `--diff` to show a patch or
 scope-markers src tests                 # check only
 scope-markers --diff src tests          # check and print a patch
 scope-markers --fix src tests           # rewrite files
-scope-markers --mark-stubs --fix src    # also mark stub-only functions
+scope-markers --mark-stubs --fix src    # include .pyi files and mark stub-only functions
 scope-markers --verbose src tests       # report every file's status
 scope-markers --fail-fast .             # stop at the first needed fix/error
 ```
@@ -210,7 +210,8 @@ the enclosing `match` statement receives its own outer marker.
 
 Documentation-only and ellipsis-only function stubs are skipped by default so
 that overloads, protocols, and interface stubs remain compact. Use
-`--mark-stubs` for the literal every-compound-statement policy:
+`--mark-stubs` for the literal every-compound-statement policy; it also enables
+recursive discovery of `.pyi` files:
 
 ```bash
 scope-markers --fix --mark-stubs src tests

@@ -10,13 +10,13 @@ import sys
 import tempfile
 import tokenize
 from bisect import bisect_right
-from collections.abc import Iterable, Mapping, MutableSequence, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
-from io import BytesIO, StringIO
+from io import StringIO
 from pathlib import Path
 from typing import Final, cast
 
@@ -110,8 +110,41 @@ class FileInspection:
 
 def _read_source(path: Path) -> tuple[str, str]:
     data = path.read_bytes()
-    encoding, _ = tokenize.detect_encoding(BytesIO(data).readline)
+    encoding, _ = tokenize.detect_encoding(_byte_line_reader(data))
     return data.decode(encoding), encoding
+####
+
+
+def _physical_byte_lines(data: bytes) -> Iterator[bytes]:
+    """Yield byte records split only on CR, LF, and CRLF boundaries."""
+    index = 0
+    while index < len(data):
+        start = index
+        while index < len(data) and data[index] not in (ord("\r"), ord("\n")):
+            index += 1
+        ####
+        if index == len(data):
+            yield data[start:]
+            return
+        ####
+        index += 1
+        if data[index - 1] == ord("\r") and index < len(data) and data[index] == ord("\n"):
+            index += 1
+        ####
+        yield data[start:index]
+    ####
+####
+
+
+def _byte_line_reader(data: bytes) -> Callable[[], bytes]:
+    """Return a newline-preserving reader for ``tokenize.detect_encoding``."""
+    lines = iter(_physical_byte_lines(data))
+
+    def readline() -> bytes:
+        return next(lines, b"")
+    ####
+
+    return readline
 ####
 
 
@@ -210,11 +243,17 @@ def _indentation_width(indentation: str) -> int:
 ####
 
 
+def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
+    """Tokenize source while retaining Python's CR, LF, and CRLF rows."""
+    stream = StringIO(source, newline="")
+    return tokenize.generate_tokens(stream.readline)
+####
+
+
 def _standalone_marker_lines(source: str, marker: str) -> set[int]:
     lines = _physical_lines(source)
     marker_lines: set[int] = set()
-    stream = StringIO(source, newline="")
-    for token in tokenize.generate_tokens(stream.readline):
+    for token in _token_stream(source):
         if token.type != tokenize.COMMENT or token.string.rstrip(" \t\f") != marker:
             continue
         ####
@@ -267,13 +306,29 @@ def _parents(tree: ast.AST) -> dict[int, ast.AST]:
 ####
 
 
-def _is_elif(node: ast.If, parents: Mapping[int, ast.AST]) -> bool:
+def _header_indentation_width(node: ast.stmt, lines: Sequence[str]) -> int | None:
+    """Return a header's effective Python indentation when it is available."""
+    if not 1 <= node.lineno <= len(lines):
+        return None
+    ####
+    return _indentation_width(_indentation_prefix(lines[node.lineno - 1]))
+####
+
+
+def _is_elif(
+        node: ast.If, parents: Mapping[int, ast.AST], lines: Sequence[str]
+) -> bool:
     parent = parents.get(id(node))
+    parent_width = (
+        _header_indentation_width(parent, lines) if isinstance(parent, ast.If) else None
+    )
+    node_width = _header_indentation_width(node, lines)
     return (
             isinstance(parent, ast.If)
             and bool(parent.orelse)
             and parent.orelse[0] is node
-            and parent.col_offset == node.col_offset
+            and parent_width is not None
+            and parent_width == node_width
     )
 ####
 
@@ -291,7 +346,9 @@ def _is_stub_function(node: ast.stmt) -> bool:
 ####
 
 
-def _compound_nodes(tree: ast.AST, *, mark_stubs: bool) -> list[ast.stmt]:
+def _compound_nodes(
+        tree: ast.AST, lines: Sequence[str], *, mark_stubs: bool
+) -> list[ast.stmt]:
     parents = _parents(tree)
     nodes: list[ast.stmt] = []
     for candidate in ast.walk(tree):
@@ -299,7 +356,7 @@ def _compound_nodes(tree: ast.AST, *, mark_stubs: bool) -> list[ast.stmt]:
             continue
         ####
         node = candidate
-        if isinstance(node, ast.If) and _is_elif(node, parents):
+        if isinstance(node, ast.If) and _is_elif(node, parents, lines):
             continue
         ####
         if not mark_stubs and _is_stub_function(node):
@@ -335,7 +392,7 @@ def _match_case_header_lines(lines: Sequence[str]) -> list[int]:
     case_lines: list[int] = []
     at_statement_start = True
     source = "".join(lines)
-    for token in tokenize.generate_tokens(StringIO(source).readline):
+    for token in _token_stream(source):
         if token.type == tokenize.NAME and token.string == "case" and at_statement_start:
             case_lines.append(token.start[0])
         ####
@@ -430,7 +487,7 @@ def _scope_boundaries(
 ) -> list[ScopeBoundary]:
     boundaries = [
         _compound_boundary(node, lines)
-        for node in _compound_nodes(tree, mark_stubs=mark_stubs)
+        for node in _compound_nodes(tree, lines, mark_stubs=mark_stubs)
     ]
     boundaries.extend(_match_case_boundaries(tree, lines))
     return boundaries
@@ -565,9 +622,11 @@ def _is_discoverable_file(
         root: Path,
         include_patterns: tuple[str, ...],
         exclude_patterns: tuple[str, ...],
+        include_stubs: bool,
 ) -> bool:
     supported = (
             path.suffix.casefold() == ".py"
+            or (include_stubs and path.suffix.casefold() == ".pyi")
             or _matches_pattern(path, root, include_patterns)
     )
     return supported and not _is_excluded_path(path, root, exclude_patterns)
@@ -580,6 +639,7 @@ def _walk_python_files(
         include_patterns: tuple[str, ...],
         exclude_patterns: tuple[str, ...],
         use_default_excludes: bool,
+        include_stubs: bool,
 ) -> set[Path]:
     files: set[Path] = set()
 
@@ -603,7 +663,13 @@ def _walk_python_files(
         names[:] = kept_directories
         for name in sorted(filenames):
             candidate = current / name
-            if _is_discoverable_file(candidate, root, include_patterns, exclude_patterns):
+            if _is_discoverable_file(
+                    candidate,
+                    root,
+                    include_patterns,
+                    exclude_patterns,
+                    include_stubs,
+            ):
                 files.add(candidate)
             ####
         ####
@@ -640,8 +706,9 @@ def discover_python_files(
         include_patterns: Iterable[str] = (),
         exclude_patterns: Iterable[str] = (),
         use_default_excludes: bool = True,
+        include_stubs: bool = False,
 ) -> tuple[list[Path], list[str]]:
-    """Resolve explicit inputs into deterministic Python files and diagnostics."""
+    """Resolve inputs into Python files, optionally including ``.pyi`` stubs."""
     files: dict[str, Path] = {}
     errors: list[str] = []
     includes = tuple(include_patterns)
@@ -649,11 +716,14 @@ def discover_python_files(
     for path in paths:
         try:
             if path.is_file():
-                if (
-                        path.suffix.casefold() != ".py"
-                        and not _matches_pattern(path, path.parent, includes)
+                if not _is_discoverable_file(
+                        path,
+                        path.parent,
+                        includes,
+                        (),
+                        include_stubs,
                 ):
-                    errors.append(f"{path}: expected a .py file or directory")
+                    errors.append(f"{path}: expected a supported source file or directory")
                 else:
                     _remember_file(files, path)
                 ####
@@ -670,7 +740,12 @@ def discover_python_files(
                     continue
                 ####
                 for discovered in _walk_python_files(
-                    path, errors, includes, patterns, use_default_excludes
+                    path,
+                    errors,
+                    includes,
+                    patterns,
+                    use_default_excludes,
+                    include_stubs,
                 ):
                     _remember_file(files, discovered)
                 ####
@@ -691,6 +766,7 @@ def python_files(
         include_patterns: Iterable[str] = (),
         exclude_patterns: Iterable[str] = (),
         use_default_excludes: bool = True,
+        include_stubs: bool = False,
 ) -> list[Path]:
     """Backward-compatible file discovery without returning diagnostics."""
     files, _ = discover_python_files(
@@ -698,6 +774,7 @@ def python_files(
         include_patterns=include_patterns,
         exclude_patterns=exclude_patterns,
         use_default_excludes=use_default_excludes,
+        include_stubs=include_stubs,
     )
     return files
 ####

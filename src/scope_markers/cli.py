@@ -29,7 +29,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mark-stubs",
         action="store_true",
-        help="also mark documentation-only and ellipsis-only function stubs",
+        help="also discover .pyi files and mark documentation-only and ellipsis-only stubs",
     )
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--quiet", action="store_true", help="suppress status output")
@@ -88,6 +88,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         include_patterns=include_patterns,
         exclude_patterns=exclude_patterns,
         use_default_excludes=use_default_excludes,
+        include_stubs=mark_stubs,
     )
     if errors and fail_fast:
         _report_errors(errors)
