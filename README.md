@@ -364,16 +364,16 @@ scope-markers --fix src tests scripts
 
 The complete validation roles are:
 
-| Tool                | Command                           | Purpose                                                                   |
-|---------------------|-----------------------------------|---------------------------------------------------------------------------|
-| Ruff                | `ruff check src scripts tests`    | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
-| Diff contract       | `python scripts/check_diff.py`    | Verify emitted patches with Git across newline and encoding cases         |
-| Black               | `black src tests scripts`         | Ordinary Python formatting before markers                                 |
-| Black compatibility | `python scripts/check_black.py`   | Black format/check smoke test with standalone markers removed             |
-| Flake8              | `flake8 src scripts tests`        | Compatibility lint pass using `.flake8`                                   |
-| Pyright             | `python scripts/check_pyright.py` | Strict type checking for `src`, `scripts`, and `tests`                    |
-| Pytest              | `pytest -q`                       | Regression test suite                                                     |
-| Build               | `python scripts/check_build.py`   | Wheel packaging check                                                     |
+| Tool                | Command                                     | Purpose                                                                   |
+|---------------------|---------------------------------------------|---------------------------------------------------------------------------|
+| Ruff                | `ruff check src scripts tests`              | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
+| Diff contract       | `python scripts/check_diff.py`              | Verify emitted patches with Git across newline and encoding cases         |
+| Black               | `black src tests scripts`                   | Ordinary Python formatting before markers                                 |
+| Black compatibility | `python scripts/check_black.py`             | Black format/check smoke test with standalone markers removed             |
+| Flake8              | `flake8 src scripts tests`                  | Compatibility lint pass using `.flake8`                                   |
+| Pyright             | `python scripts/check_pyright.py`           | Strict type checking for `src`, `scripts`, and `tests`                    |
+| Pytest              | `pytest -q`                                 | Regression test suite                                                     |
+| Build               | `python scripts/check_build.py`             | Wheel packaging check                                                     |
 | Scope markers       | `python -m scope_markers src scripts tests` | Project-specific marker check                                             |
 
 Ruff's annotation rules require parameters and return values to be annotated for
