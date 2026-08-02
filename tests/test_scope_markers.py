@@ -158,6 +158,27 @@ def test_multiline_match_case_marker_uses_case_header_indentation() -> None:
 ####
 
 
+def test_multiline_match_case_capture_named_case_uses_header_indentation() -> None:
+    source = (
+        "match value:\n"
+        "    case (\n"
+        "        case\n"
+        "    ):\n"
+        "        pass\n"
+    )
+
+    assert scope_markers.format_source(source) == (
+        "match value:\n"
+        "    case (\n"
+        "        case\n"
+        "    ):\n"
+        "        pass\n"
+        "    ####\n"
+        "####\n"
+    )
+####
+
+
 @pytest.mark.parametrize(
     "case_header",
     ("case[1]:", 'case{"key": value}:', "case-1:"),

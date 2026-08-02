@@ -359,19 +359,33 @@ def _match_case_boundaries(tree: ast.AST, lines: Sequence[str]) -> list[ScopeBou
 
 
 def _match_case_line_number(lines: Sequence[str], pattern_line: int) -> int:
-    case_line: int | None = None
+    case_tokens: list[tuple[int, int, int]] = []
+    bracket_depth = 0
     source = "".join(lines)
     for token in tokenize.generate_tokens(StringIO(source).readline):
-        if (
-            token.type == tokenize.NAME
-            and token.string == "case"
-            and token.start[0] <= pattern_line
-        ):
-            case_line = token.start[0]
+        if token.start[0] > pattern_line:
+            break
+        ####
+        if token.type == tokenize.NAME and token.string == "case":
+            case_tokens.append((token.start[0], token.start[1], bracket_depth))
+        ####
+        if token.type == tokenize.OP:
+            if token.string in ")]}":
+                bracket_depth -= 1
+            elif token.string in "([{":
+                bracket_depth += 1
+            ####
         ####
     ####
-    if case_line is not None:
-        return case_line
+    if case_tokens:
+        header_depth = min(depth for _, _, depth in case_tokens)
+        header_tokens = [
+            (line, column)
+            for line, column, depth in case_tokens
+            if depth == header_depth
+        ]
+        header_line = max(line for line, _ in header_tokens)
+        return header_line
     ####
     raise ScopeMarkersError("match case has no case header")
 ####
