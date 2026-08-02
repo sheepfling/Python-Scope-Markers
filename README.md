@@ -187,6 +187,23 @@ pipx install .
 scope-markers --fix src tests
 ```
 
+For a one-off local checkout, the command can also be run without installing a
+persistent application:
+
+```bash
+uvx --from . scope-markers --fix src tests
+pipx run --spec . scope-markers --fix src tests
+```
+
+Use `uv` or an ordinary virtual environment for the complete development tool
+set. `pipx` is intended for isolated applications, not for coordinating this
+project's pytest, Ruff, Black, Flake8, Pyright, and build dependencies:
+
+```bash
+uv sync --extra dev
+uv run python scripts/ci.py
+```
+
 ## Pre-commit
 
 The project includes `.pre-commit-hooks.yaml` for use after publishing the
