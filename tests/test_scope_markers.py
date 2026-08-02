@@ -1878,6 +1878,22 @@ def test_strip_file_preserves_source_encoding_and_reports_missing_files(tmp_path
 ####
 
 
+def test_strip_file_returns_diagnostic_for_invalid_encoding_declaration(
+        tmp_path: Path,
+) -> None:
+    path = tmp_path / "invalid-encoding.py"
+    path.write_bytes(b"# coding: not-a-real-encoding\n####\n")
+
+    changed, error = api.strip_file(path, fix=True)
+
+    assert changed is False
+    assert error is not None
+    assert "invalid-encoding.py" in error
+    assert "unknown encoding" in error
+    assert path.read_bytes().endswith(b"####\n")
+####
+
+
 def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None:
     assert api.__all__ == (
         "FileInspection",

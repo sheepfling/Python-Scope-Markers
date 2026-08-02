@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-import tokenize
 from collections.abc import Sequence
 from pathlib import Path
 
 from ._diff import render_diff, write_diff
 from ._implementation import (
-    ScopeMarkersError,
+    FILE_PROCESSING_ERRORS,
     format_error,
     write_atomic,
 )
@@ -163,13 +162,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if fail_fast:
                 break
             ####
-        except (
-                OSError,
-                SyntaxError,
-                UnicodeError,
-                tokenize.TokenError,
-                ScopeMarkersError,
-        ) as error:
+        except FILE_PROCESSING_ERRORS as error:
             errors.append(format_error(path, error))
             if fail_fast:
                 break

@@ -32,6 +32,17 @@ class ScopeMarkersError(ValueError):
 ####
 
 
+FILE_PROCESSING_ERRORS: Final = (
+    OSError,
+    SyntaxError,
+    UnicodeError,
+    tokenize.TokenError,
+    ScopeMarkersError,
+)
+# All public file operations and the CLI convert these expected input/filesystem
+# failures into diagnostics. Keep the tuple shared so new operations cannot drift.
+
+
 # ``####`` is the documented default; existing standalone markers can select
 # ``##`` or ``####`` for compatibility with an already-formatted source tree.
 MARKER: Final = "####"
@@ -1141,13 +1152,7 @@ def process_file(
         if inspection.changed and fix:
             _write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####
-    except (
-            OSError,
-            SyntaxError,
-            UnicodeError,
-            tokenize.TokenError,
-            ScopeMarkersError,
-    ) as error:
+    except FILE_PROCESSING_ERRORS as error:
         return False, _error_message(path, error)
     ####
     return inspection.changed, None
@@ -1161,7 +1166,7 @@ def strip_file(path: Path, *, fix: bool) -> tuple[bool, str | None]:
         if inspection.changed and fix:
             _write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####
-    except (OSError, UnicodeError, tokenize.TokenError, ScopeMarkersError) as error:
+    except FILE_PROCESSING_ERRORS as error:
         return False, _error_message(path, error)
     ####
     return inspection.changed, None
