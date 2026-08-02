@@ -658,25 +658,56 @@ def _compound_header_lines(tree: ast.AST, lines: Sequence[str]) -> set[int]:
 
 def _inline_suite_header_lines(source: str, header_lines: set[int]) -> set[int]:
     """Return headers whose suite continues on the same physical line."""
-    tokens_by_line: dict[int, list[tokenize.TokenInfo]] = {}
-    for token in _token_stream(source):
-        if token.start[0] in header_lines:
-            tokens_by_line.setdefault(token.start[0], []).append(token)
-        ####
-    ####
     inline_headers: set[int] = set()
     ignored = {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.ENDMARKER}
-    for row, tokens in tokens_by_line.items():
-        last_colon = max(
-            (
-                index
-                for index, token in enumerate(tokens)
-                if token.type == tokenize.OP and token.string == ":"
-            ),
-            default=-1,
-        )
-        if last_colon >= 0 and any(token.type not in ignored for token in tokens[last_colon + 1:]):
-            inline_headers.add(row)
+    opening = {"(", "[", "{"}
+    closing = {
+        ")": "(",
+        "]": "[",
+        "}": "{",
+    }
+    active_row: int | None = None
+    bracket_stack: list[str] = []
+    colon_row: int | None = None
+    for token in _token_stream(source):
+        if active_row is None:
+            if token.start[0] in header_lines:
+                active_row = token.start[0]
+            else:
+                continue
+            ####
+        ####
+        if token.type == tokenize.NEWLINE:
+            active_row = None
+            bracket_stack.clear()
+            colon_row = None
+            continue
+        ####
+        if colon_row is None:
+            if token.type == tokenize.OP and token.string in opening:
+                bracket_stack.append(token.string)
+                continue
+            ####
+            if token.type == tokenize.OP and token.string in closing:
+                if bracket_stack and bracket_stack[-1] == closing[token.string]:
+                    bracket_stack.pop()
+                ####
+                continue
+            ####
+            if (
+                    token.type == tokenize.OP
+                    and token.string == ":"
+                    and not bracket_stack
+            ):
+                colon_row = token.start[0]
+            ####
+            continue
+        ####
+        if token.type not in ignored:
+            inline_headers.add(colon_row)
+            active_row = None
+            bracket_stack.clear()
+            colon_row = None
         ####
     ####
     return inline_headers
@@ -692,6 +723,12 @@ def _inline_suite_comment_depths(
     headers = _inline_suite_header_lines(source, _compound_header_lines(tree, lines))
     for row in headers:
         depth = statement_depths.get(row)
+        if depth is None:
+            preceding_rows = [candidate for candidate in statement_depths if candidate < row]
+            if preceding_rows:
+                depth = statement_depths[max(preceding_rows)]
+            ####
+        ####
         if depth is None:
             continue
         ####

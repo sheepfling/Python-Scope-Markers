@@ -253,6 +253,75 @@ def test_indent_width_normalizes_comments_after_inline_clause_headers() -> None:
 ####
 
 
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_indent_width_normalizes_comments_after_multiline_inline_headers(
+        newline: str,
+) -> None:
+    source = (
+        "if (\n"
+        "    condition\n"
+        "): pass\n"
+        "    # Attached to the multiline inline suite.\n"
+        "next_value = 1\n"
+    ).replace("\n", newline)
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "if (\n"
+        "    condition\n"
+        "): pass\n"
+        "  # Attached to the multiline inline suite.\n"
+        "####\n"
+        "next_value = 1\n"
+    ).replace("\n", newline)
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_indent_width_preserves_nested_multiline_docstring_content(
+        newline: str,
+) -> None:
+    source = (
+        "class Example:\n"
+        '    """Class docs.\n'
+        "\n"
+        "    # Literal comment text.\n"
+        "    ####\n"
+        "    \\tPreserve this tab.\n"
+        '    """\n'
+        "    def method(self):\n"
+        '        r"""Method docs.\n'
+        "\n"
+        "        # Not a source comment.\n"
+        '        """\n'
+        "        if ready:\n"
+        "            pass\n"
+    ).replace("\n", newline)
+
+    formatted = scope_markers.format_source(source, indent_width=2)
+
+    assert formatted == (
+        "class Example:\n"
+        '  """Class docs.\n'
+        "\n"
+        "    # Literal comment text.\n"
+        "    ####\n"
+        "    \\tPreserve this tab.\n"
+        '    """\n'
+        "  def method(self):\n"
+        '    r"""Method docs.\n'
+        "\n"
+        "        # Not a source comment.\n"
+        '        """\n'
+        "    if ready:\n"
+        "      pass\n"
+        "    ####\n"
+        "  ####\n"
+        "####\n"
+    ).replace("\n", newline)
+    assert scope_markers.format_source(formatted, indent_width=2) == formatted
+####
+
+
 def test_indent_width_normalizes_comments_after_inline_match_cases() -> None:
     source = (
         "match value:\n"
