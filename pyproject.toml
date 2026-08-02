@@ -30,7 +30,10 @@ dev = [
 scope-markers = "scope_markers:main"
 
 [tool.setuptools]
-py-modules = ["scope_markers"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0"
@@ -38,7 +41,7 @@ version_scheme = "no-guess-dev"
 
 [tool.pytest.ini_options]
 addopts = "-ra"
-testpaths = ["test_scope_markers.py"]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
@@ -48,6 +51,6 @@ target-version = "py311"
 select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
 
 [tool.pyright]
-include = ["scope_markers.py", "scripts"]
+include = ["src", "scripts"]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"

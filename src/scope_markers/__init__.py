@@ -26,6 +26,7 @@ except PackageNotFoundError:
 ####
 
 MARKER: Final = "####"
+MARKER_STYLES: Final = ("##", "####")
 DEFAULT_SKIP_DIRECTORIES: Final = frozenset(
     {
         ".direnv",
@@ -190,12 +191,12 @@ def _indentation_width(indentation: str) -> int:
 ####
 
 
-def _standalone_marker_lines(source: str) -> set[int]:
+def _standalone_marker_lines(source: str, marker: str) -> set[int]:
     lines = _physical_lines(source)
     marker_lines: set[int] = set()
     stream = StringIO(source, newline="")
     for token in tokenize.generate_tokens(stream.readline):
-        if token.type != tokenize.COMMENT or token.string.rstrip(" \t\f") != MARKER:
+        if token.type != tokenize.COMMENT or token.string.rstrip(" \t\f") != marker:
             continue
         ####
         row, column = token.start
@@ -213,8 +214,18 @@ def _standalone_marker_lines(source: str) -> set[int]:
 ####
 
 
-def _without_markers(source: str) -> str:
-    marker_lines = _standalone_marker_lines(source)
+def _detect_marker_style(source: str) -> str:
+    styles = {marker for marker in MARKER_STYLES if _standalone_marker_lines(source, marker)}
+    if len(styles) > 1:
+        found = ", ".join(sorted(styles))
+        raise ValueError(f"conflicting standalone marker styles: {found}")
+    ####
+    return next(iter(styles), MARKER)
+####
+
+
+def _without_markers(source: str, marker: str) -> str:
+    marker_lines = _standalone_marker_lines(source, marker)
     if not marker_lines:
         return source
     ####
@@ -336,7 +347,8 @@ def format_source(
     mark_stubs: bool = False,
 ) -> str:
     """Return source with canonical markers after supported compound statements."""
-    clean_source = _without_markers(source)
+    marker = _detect_marker_style(source)
+    clean_source = _without_markers(source, marker)
     tree = ast.parse(clean_source, filename=filename)
     lines = _physical_lines(clean_source)
     default_newline = _preferred_newline(clean_source or source)
@@ -354,7 +366,7 @@ def format_source(
             key=lambda boundary: (boundary.indentation_width, boundary.line_number),
             reverse=True,
         )
-        markers = [f"{boundary.indentation}{MARKER}{newline}" for boundary in ordered]
+        markers = [f"{boundary.indentation}{marker}{newline}" for boundary in ordered]
         lines[index:index] = markers
     ####
     formatted = "".join(lines)

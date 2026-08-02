@@ -228,13 +228,31 @@ def test_one_line_suite_keeps_a_following_indented_comment_inside_the_scope() ->
 ####
 
 
+def test_extra_blank_lines_do_not_push_markers_to_the_end() -> None:
+    source = "class Example:\n    def method(self):\n        pass\n\n\n    value = 1\n\n\n"
+
+    assert scope_markers.format_source(source) == (
+        "class Example:\n"
+        "    def method(self):\n"
+        "        pass\n"
+        "    ####\n"
+        "\n"
+        "\n"
+        "    value = 1\n"
+        "####\n"
+        "\n"
+        "\n"
+    )
+####
+
+
 def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
     assert ci.ci_commands("python311") == (
         ("python311", "-m", "pytest", "-q"),
         ("python311", "-m", "ruff", "check", "."),
         ("python311", "-m", "pyright"),
         ("python311", "-m", "build", "--wheel"),
-        ("python311", "scope_markers.py", "scripts"),
+        ("scope-markers", "scripts"),
         ("scope-markers", "."),
     )
 ####
@@ -403,6 +421,35 @@ def test_marker_like_comments_are_not_owned_by_the_formatter() -> None:
 ####
 
 
+def test_two_hash_marker_style_is_detected_and_preserved() -> None:
+    source = "def example() -> None:\n    pass\n##\n"
+
+    assert scope_markers.format_source(source) == "def example() -> None:\n    pass\n##\n"
+####
+
+
+def test_tabbed_scope_uses_local_indentation_with_detected_marker_style() -> None:
+    source = "if outer:\n\tdef example() -> None:\n\t\tpass\n\t##\n##\n"
+
+    assert scope_markers.format_source(source) == (
+        "if outer:\n"
+        "\tdef example() -> None:\n"
+        "\t\tpass\n"
+        "\t##\n"
+        "##\n"
+    )
+####
+
+
+def test_conflicting_marker_styles_are_reported() -> None:
+    source = "def first() -> None:\n    pass\n##\ndef second() -> None:\n    pass\n####\n"
+
+    with pytest.raises(ValueError, match="conflicting standalone marker styles"):
+        scope_markers.format_source(source)
+    ####
+####
+
+
 def test_marker_text_inside_multiline_string_is_preserved() -> None:
     source = (
         "TEXT = \"\"\"\n"
@@ -467,6 +514,75 @@ def test_tab_indentation_and_visually_equal_space_comment_are_distinguished() ->
         "        # Same visual indentation as the tabbed def, not inside it.\n"
         "####\n"
     )
+####
+
+
+def test_mixed_valid_space_widths_keep_each_scope_indent() -> None:
+    source = (
+        "class Example:\n"
+        "  def first(self):\n"
+        "      if ready:\n"
+        "          pass\n"
+        "      ##\n"
+        "  def second(self):\n"
+        "      pass\n"
+        "##\n"
+    )
+
+    assert scope_markers.format_source(source) == (
+        "class Example:\n"
+        "  def first(self):\n"
+        "      if ready:\n"
+        "          pass\n"
+        "      ##\n"
+        "  ##\n"
+        "  def second(self):\n"
+        "      pass\n"
+        "  ##\n"
+        "##\n"
+    )
+####
+
+
+def test_tabbed_nesting_uses_local_indentation_and_detected_marker_style() -> None:
+    source = (
+        "class Example:\n"
+        "\tdef first(self):\n"
+        "\t\tif ready:\n"
+        "\t\t\tpass\n"
+        "\t\t##\n"
+        "\t##\n"
+        "##\n"
+    )
+
+    assert scope_markers.format_source(source) == (
+        "class Example:\n"
+        "\tdef first(self):\n"
+        "\t\tif ready:\n"
+        "\t\t\tpass\n"
+        "\t\t##\n"
+        "\t##\n"
+        "##\n"
+    )
+####
+
+
+def test_top_level_function_marker_returns_to_column_zero_after_tabbed_body() -> None:
+    source = "def example():\n\tpass\n####\n"
+
+    assert scope_markers.format_source(source) == "def example():\n\tpass\n####\n"
+####
+
+
+def test_inconsistent_tab_and_space_indentation_is_reported(tmp_path: Path) -> None:
+    path = tmp_path / "inconsistent.py"
+    path.write_bytes(b"if outer:\n\tpass\n    pass\n")
+
+    changed, error = scope_markers.process_file(path, fix=False)
+
+    assert changed is False
+    assert error is not None
+    assert "indent" in error
 ####
 
 
@@ -715,10 +831,9 @@ def test_formatter_is_idempotent_on_its_own_source() -> None:
 def test_script_runs_as_a_standalone_cli(tmp_path: Path) -> None:
     path = tmp_path / "example.py"
     path.write_text("def example():\n    pass\n", encoding="utf-8")
-    script = Path(scope_markers.__file__).resolve()
 
     completed = subprocess.run(
-        [sys.executable, str(script), "--fix", "--quiet", str(path)],
+        [sys.executable, "-m", "scope_markers", "--fix", "--quiet", str(path)],
         check=False,
         capture_output=True,
         text=True,

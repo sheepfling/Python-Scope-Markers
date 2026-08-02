@@ -13,6 +13,5 @@
 - Reports missing and non-Python explicit paths instead of silently succeeding.
 - Reports tokenizer failures with line and column information.
 - Verifies AST-shape preservation and formatter idempotence.
-- Expands the regression suite to 57 collected cases and adds a Python 3.11–3.14 CI matrix.
 - Initial isolated AST-based checker and fixer extracted from the IMU error-model
   repository.

@@ -3,7 +3,7 @@
 A small, standard-library-only Python formatter that inserts standalone `####`
 comments at the end of Python compound statements.
 
-The runtime formatter remains a single file: `scope_markers.py`. The surrounding
+The runtime formatter is packaged under `src/scope_markers/`. The surrounding
 project files make it testable, installable, and suitable for CI without adding
 runtime dependencies.
 
@@ -12,19 +12,19 @@ runtime dependencies.
 Check files without changing them:
 
 ```bash
-python scope_markers.py src tests scripts
+scope-markers src tests scripts
 ```
 
 Canonicalize files in place:
 
 ```bash
-python scope_markers.py --fix src tests scripts
+scope-markers --fix src tests scripts
 ```
 
 Show the proposed changes:
 
 ```bash
-python scope_markers.py --diff src tests scripts
+scope-markers --diff src tests scripts
 ```
 
 With no paths, the current directory is scanned recursively. Common VCS,
@@ -44,11 +44,18 @@ Run ordinary formatters first and scope markers last:
 ```bash
 python -m ruff check --fix src tests scripts
 python -m ruff format src tests scripts
-python scope_markers.py --fix src tests scripts
+scope-markers --fix src tests scripts
 ```
 
 Ruff does not know this project-specific marker convention, so running Ruff after
 scope markers may move surrounding code without restoring the markers.
+
+## Marker style detection
+
+The formatter recognizes exact standalone `##` and `####` comments. If a file
+already contains one of those styles, newly inserted markers use it. Files with
+no existing markers default to `####`. If both styles appear as standalone
+markers, formatting fails instead of guessing.
 
 ## Exact policy
 
@@ -71,7 +78,7 @@ that overloads, protocols, and interface stubs remain compact. Use
 `--mark-stubs` for the literal every-compound-statement policy:
 
 ```bash
-python scope_markers.py --fix --mark-stubs src tests
+scope-markers --fix --mark-stubs src tests
 ```
 
 `pass` bodies and `raise NotImplementedError` bodies are ordinary bodies and are
@@ -157,7 +164,7 @@ pytest -q
 python -m build --wheel
 ruff check .
 pyright
-python scope_markers.py .
+scope-markers .
 ```
 
 The complete local/CI check sequence is also available as one command:
