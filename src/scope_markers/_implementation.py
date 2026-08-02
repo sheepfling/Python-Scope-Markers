@@ -31,8 +31,12 @@ class ScopeMarkersError(ValueError):
 ####
 
 
+# ``####`` is the documented default; existing standalone markers can select
+# ``##`` or ``####`` for compatibility with an already-formatted source tree.
 MARKER: Final = "####"
 MARKER_STYLES: Final = ("##", "####")
+# These are generated, cached, or environment-managed trees that should not
+# be traversed by default. The CLI exposes --no-default-excludes when needed.
 DEFAULT_SKIP_DIRECTORIES: Final = frozenset(
     {
         ".direnv",
@@ -355,11 +359,18 @@ def _match_case_boundaries(tree: ast.AST, lines: Sequence[str]) -> list[ScopeBou
 
 
 def _match_case_line_number(lines: Sequence[str], pattern_line: int) -> int:
-    for line_number in range(pattern_line, 0, -1):
-        text = _line_body(lines[line_number - 1]).lstrip(" \t\f")
-        if text == "case" or text.startswith("case ") or text.startswith("case("):
-            return line_number
+    case_line: int | None = None
+    source = "".join(lines)
+    for token in tokenize.generate_tokens(StringIO(source).readline):
+        if (
+            token.type == tokenize.NAME
+            and token.string == "case"
+            and token.start[0] <= pattern_line
+        ):
+            case_line = token.start[0]
         ####
+    if case_line is not None:
+        return case_line
     ####
     raise ScopeMarkersError("match case has no case header")
 ####

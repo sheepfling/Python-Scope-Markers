@@ -158,6 +158,23 @@ def test_multiline_match_case_marker_uses_case_header_indentation() -> None:
 ####
 
 
+@pytest.mark.parametrize(
+    "case_header",
+    ("case[1]:", 'case{"key": value}:', "case-1:"),
+)
+def test_punctuation_after_case_soft_keyword_is_supported(case_header: str) -> None:
+    source = (
+        "match value:\n"
+        f"    {case_header}\n"
+        "        pass\n"
+    )
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.endswith("        pass\n    ####\n####\n")
+####
+
+
 def test_one_line_suites_and_semicolon_lists_are_supported() -> None:
     source = (
         "def outer():\n"
@@ -412,6 +429,21 @@ def test_flake8_configuration_allows_marker_and_black_compatible_syntax(
 
 def test_black_compatibility_check_passes() -> None:
     assert check_black.main() == 0
+####
+
+
+def test_black_marker_removal_preserves_unicode_line_separators() -> None:
+    source = (
+        'value = """first\u2028second\n"""\n'
+        "def example() -> None:\n"
+        "    pass\n"
+        "####\n"
+    )
+
+    cleaned = check_black._without_standalone_markers(source)
+
+    assert cleaned == source.removesuffix("####\n")
+    compile(cleaned, "unicode-separator.py", "exec")
 ####
 
 

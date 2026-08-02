@@ -14,7 +14,7 @@ PYTHON_ROOTS = (ROOT / "src", ROOT / "scripts", ROOT / "tests")
 MARKERS = {"##", "####"}
 
 def _without_standalone_markers(source: str) -> str:
-    lines = source.splitlines(keepends=True)
+    lines = StringIO(source, newline="").readlines()
     marker_rows: set[int] = set()
     for token in tokenize.generate_tokens(StringIO(source).readline):
         if token.type != tokenize.COMMENT or token.string.strip() not in MARKERS:
