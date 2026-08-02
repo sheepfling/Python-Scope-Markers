@@ -23,11 +23,37 @@ from .api import (
 )
 
 
+def _diff_path(path: Path) -> str:
+    """Return a patch-friendly path label relative to the current directory."""
+    absolute = path.absolute()
+    try:
+        return absolute.relative_to(Path.cwd().absolute()).as_posix()
+    except ValueError:
+        return path.as_posix()
+    ####
+####
+
+
+def _contains_bare_cr(source: str) -> bool:
+    return any(line.endswith("\r") for line in physical_lines(source))
+####
+
+
 def _unified_diff(inspection: FileInspection) -> str:
     """Render a patch with normalized records and explicit EOF markers."""
     source = inspection.source
     formatted = inspection.formatted
-    path = inspection.path
+    if _contains_bare_cr(source):
+        raise ScopeMarkersError(
+            "cannot render a patch for bare-CR line endings; "
+            "use --fix or convert the file to LF or CRLF first"
+        )
+    ####
+    if inspection.encoding.casefold() == "utf-8-sig":
+        source = f"\ufeff{source}"
+        formatted = f"\ufeff{formatted}"
+    ####
+    path = _diff_path(inspection.path)
     source_lines = _diff_lines(source)
     formatted_lines = _diff_lines(formatted)
     source_final_line = _final_diff_line(source)
@@ -35,8 +61,8 @@ def _unified_diff(inspection: FileInspection) -> str:
     diff = difflib.unified_diff(
         source_lines,
         formatted_lines,
-        fromfile=str(path),
-        tofile=str(path),
+        fromfile=path,
+        tofile=path,
     )
     output: list[str] = []
     for line in diff:
@@ -49,6 +75,21 @@ def _unified_diff(inspection: FileInspection) -> str:
         ####
     ####
     return "".join(output)
+####
+
+
+def _write_diff(diff: str, encoding: str) -> None:
+    """Write diff bytes without platform newline translation."""
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(diff)
+        return
+    ####
+    if encoding.casefold() == "utf-8-sig":
+        encoding = "utf-8"
+    ####
+    errors = sys.stdout.errors or "strict"
+    buffer.write(diff.encode(encoding, errors))
 ####
 
 
@@ -73,18 +114,20 @@ def _is_missing_final_newline(
 
 
 def _diff_lines(source: str) -> list[str]:
-    """Return LF-delimited records suitable for unified diff output."""
+    """Return diff records while preserving CRLF content endings."""
     lines: list[str] = []
     for line in physical_lines(source):
         if line.endswith("\r\n"):
-            line = line[:-2]
+            # Keep CRLF in the record so patches apply to CRLF files. The
+            # embedded CRLF also supplies difflib's required record ending.
+            lines.append(line)
         elif line.endswith(("\r", "\n")):
-            line = line[:-1]
+            # Bare CR is unreachable from the CLI, which rejects it before
+            # rendering; keep the fallback for direct internal callers.
+            lines.append(f"{line[:-1]}\n")
+        else:
+            lines.append(f"{line}\x00\n")
         ####
-        lines.append(f"{line}\n")
-    ####
-    if lines and source and not source.endswith(("\r", "\n")):
-        lines[-1] = f"{lines[-1][:-1]}\x00\n"
     ####
     return lines
 ####
@@ -185,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ####
             changed.append(path)
             if show_diff:
-                sys.stdout.write(_unified_diff(inspection))
+                _write_diff(_unified_diff(inspection), inspection.encoding)
                 if verbose:
                     print(f"needs markers: {path}", file=sys.stderr)
                 ####

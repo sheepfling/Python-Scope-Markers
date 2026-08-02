@@ -169,12 +169,16 @@ def _preferred_newline(source: str) -> str:
 
 
 def _newline_for_insertion(lines: Sequence[str], index: int, default: str) -> str:
-    for neighbor in (index - 1, index):
-        if 0 <= neighbor < len(lines):
-            ending = _line_ending(lines[neighbor])
-            if ending is not None:
-                return ending
-            ####
+    for neighbor in range(index - 1, -1, -1):
+        ending = _line_ending(lines[neighbor])
+        if ending is not None:
+            return ending
+        ####
+    ####
+    for neighbor in range(index, len(lines)):
+        ending = _line_ending(lines[neighbor])
+        if ending is not None:
+            return ending
         ####
     ####
     return default

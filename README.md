@@ -75,6 +75,11 @@ scope-markers --fail-fast .             # stop at the first needed fix/error
 the patch remains clean on standard output and per-file status is reported on
 standard error.
 
+Diff output preserves LF and CRLF records and includes explicit markers for a
+missing final newline. `--diff` rejects changed files with bare-CR line endings
+because unified-diff tools cannot apply those physical boundaries; use `--fix`
+or convert such files to LF or CRLF first.
+
 The default check scans every discovered file so CI can report all required
 changes. Use `--fail-fast` for a quick local check that stops after the first
 changed file or processing error.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -911,6 +912,20 @@ def test_missing_final_newline_is_repaired_before_marker() -> None:
 ####
 
 
+def test_unterminated_final_scope_uses_nearest_newline() -> None:
+    source = "def first():\r\n    pass\r\ndef final():\n    pass"
+
+    assert scope_markers.format_source(source) == (
+        "def first():\r\n"
+        "    pass\r\n"
+        "####\r\n"
+        "def final():\n"
+        "    pass\n"
+        "####\n"
+    )
+####
+
+
 @pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
 def test_newline_convention_is_preserved(newline: str) -> None:
     source = newline.join(("def example() -> None:", "    pass", ""))
@@ -1448,21 +1463,21 @@ def test_cli_diff_marks_missing_newline_on_unchanged_context_line(
 ####
 
 
-def test_cli_diff_normalizes_bare_carriage_return_lines(
+def test_cli_diff_rejects_bare_carriage_return_lines(
         tmp_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = tmp_dir / "bare-cr.py"
     path.write_bytes(b"def example():\r    pass\r")
 
-    assert cli.main(["--diff", str(path)]) == 1
-    output = capsys.readouterr().out
+    assert cli.main(["--diff", str(path)]) == 2
+    captured = capsys.readouterr()
 
-    assert "    pass\n+####\n" in output
-    assert "\r" not in output
+    assert captured.out == ""
+    assert "bare-CR line endings" in captured.err
 ####
 
 
-def test_cli_diff_normalizes_mixed_line_endings(
+def test_cli_diff_preserves_crlf_records_in_mixed_line_endings(
         tmp_dir: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = tmp_dir / "mixed-newlines.py"
@@ -1471,9 +1486,108 @@ def test_cli_diff_normalizes_mixed_line_endings(
     assert cli.main(["--diff", str(path)]) == 1
     output = capsys.readouterr().out
 
-    assert "\r" not in output
+    assert " def first():\r\n" in output
+    assert "     pass\r\n" in output
+    assert "+####\r\n" in output
+    assert "+####\n" in output
     assert "-    pass+    pass" not in output
-    assert output.count("+####\n") == 2
+    assert output.count("+####") == 2
+####
+
+
+def test_cli_diff_for_crlf_file_is_acceptable_to_git(
+        tmp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+) -> None:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is unavailable")
+    ####
+
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    path = repo / "example.py"
+    path.write_bytes(b"def example():\r\n    pass\r\n")
+    subprocess.run([git, "init", "--quiet"], cwd=repo, check=True)
+    monkeypatch.chdir(repo)
+
+    assert cli.main(["--diff", str(path)]) == 1
+    patch = tmp_dir / "change.patch"
+    patch.write_text(capsys.readouterr().out, encoding="utf-8", newline="")
+
+    checked = subprocess.run(
+        [git, "apply", "--check", str(patch)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert checked.returncode == 0, checked.stderr
+####
+
+
+@pytest.mark.parametrize(
+    ("filename", "data"),
+    (
+        ("utf8.py", b"# coding: utf-8\ndef example():\n    value = 'h\xc3\xa9llo'\n"),
+        ("cp1252.py", b"# coding: cp1252\ndef example():\n    value = 'h\xe9llo'\n"),
+        ("bom.py", b"\xef\xbb\xbfdef example():\n    pass\n"),
+    ),
+)
+def test_cli_diff_preserves_source_encoding_for_git(
+        tmp_dir: Path,
+        filename: str,
+        data: bytes,
+) -> None:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is unavailable")
+    ####
+
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    path = repo / filename
+    path.write_bytes(data)
+    subprocess.run([git, "init", "--quiet"], cwd=repo, check=True)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "scope_markers", "--diff", str(path)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+    assert completed.returncode == 1
+    patch = tmp_dir / "change.patch"
+    patch.write_bytes(completed.stdout)
+
+    checked = subprocess.run(
+        [git, "apply", "--check", str(patch)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+
+    assert checked.returncode == 0, checked.stderr.decode(errors="replace")
+####
+
+
+def test_cli_diff_subprocess_preserves_crlf_bytes(tmp_dir: Path) -> None:
+    path = tmp_dir / "example.py"
+    path.write_bytes(b"def example():\r\n    pass\r\n")
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "scope_markers", "--diff", path.name],
+        cwd=tmp_dir,
+        check=False,
+        capture_output=True,
+    )
+
+    assert completed.returncode == 1
+    assert b"\r\r\n" not in completed.stdout
+    assert b" def example():\r\n" in completed.stdout
+    assert b"+####\r\n" in completed.stdout
 ####
 
 
@@ -1482,12 +1596,12 @@ def test_cli_diff_marks_missing_final_newline_in_mixed_line_endings(
 ) -> None:
     """Mixed physical endings must remain separate in a patch."""
     path = tmp_dir / "mixed-no-final-newline.py"
-    path.write_bytes(b"def first():\r\n    pass\rdef second():\n    pass")
+    path.write_bytes(b"def first():\r\n    pass\r\ndef second():\n    pass")
 
     assert cli.main(["--diff", str(path)]) == 1
     output = capsys.readouterr().out
 
-    assert "\r" not in output
+    assert " def first():\r\n" in output
     assert "-    pass+    pass" not in output
     assert "-    pass\n\\ No newline at end of file\n+    pass\n" in output
 ####
@@ -1602,7 +1716,7 @@ def test_cli_verbose_reports_status_without_polluting_diff(
     assert cli.main(["--diff", "--verbose", str(path)]) == 1
     captured = capsys.readouterr()
 
-    assert "+####\n" in captured.out
+    assert "+####" in captured.out
     assert f"needs markers: {path}" in captured.err
 
     assert cli.main(["--fix", "--verbose", str(path)]) == 0
