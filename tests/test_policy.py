@@ -276,7 +276,10 @@ def test_explicit_selection_does_not_inherit_final_case_filter(
         "        handle_other()\n"
     )
 
-    assert api.format_source(source, policy=api.load_policy(config)).count("####") == (
+    policy = api.load_policy(config)
+
+    assert policy.final_case_only is False
+    assert api.format_source(source, policy=policy).count("####") == (
         3 if selection == "all" else 2
     )
 ####
@@ -502,6 +505,7 @@ def test_per_file_select_replaces_default_match_case_filter(tmp_path: Path) -> N
 
     policy = api.resolve_policy(config, source)
 
+    assert policy.final_case_only is False
     assert api.format_source(source.read_text(encoding="utf-8"), policy=policy).count(
         "####"
     ) == 2
