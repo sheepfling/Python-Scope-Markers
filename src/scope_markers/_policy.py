@@ -45,9 +45,11 @@ class BoundaryKind(StrEnum):
 ####
 
 
-ALL_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(BoundaryKind)
+ALL_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+    kind for kind in BoundaryKind
+)
 STATEMENT_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
-    kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("statement.")
+    kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("statement.")
 )
 CLASSIC_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     (*STATEMENT_BOUNDARY_KINDS, BoundaryKind.CLAUSE_MATCH_CASE)
@@ -62,16 +64,16 @@ SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType
         ),
         "statements": STATEMENT_BOUNDARY_KINDS,
         "clauses": frozenset(
-            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("clause.")
+            kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("clause.")
         ),
         "conditionals": frozenset(
-            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("statement.if")
-            or kind.value.startswith("clause.if.")
+            kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("statement.if")
+            or str(kind).startswith("clause.if.")
         ),
         "loops": frozenset(
             kind
             for kind in ALL_BOUNDARY_KINDS
-            if kind.value.startswith(
+            if str(kind).startswith(
                 ("statement.for", "statement.while", "clause.for.", "clause.while.")
             )
         ),
@@ -79,7 +81,7 @@ SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType
         "exceptions": frozenset(
             kind
             for kind in ALL_BOUNDARY_KINDS
-            if kind.value.startswith(("statement.try", "clause.try."))
+            if str(kind).startswith(("statement.try", "clause.try."))
         ),
         "patterns": frozenset({BoundaryKind.STATEMENT_MATCH, BoundaryKind.CLAUSE_MATCH_CASE}),
     }
@@ -336,7 +338,7 @@ def expand_selectors(selectors: tuple[str, ...]) -> frozenset[BoundaryKind]:
         ####
         prefix = f"{name}."
         prefixed: set[BoundaryKind] = {
-            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith(prefix)
+                kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith(prefix)
         }
         if prefixed:
             expanded.update(prefixed)
@@ -354,7 +356,7 @@ def expand_selectors(selectors: tuple[str, ...]) -> frozenset[BoundaryKind]:
 
 
 def _selector_suggestion(selector: str) -> str | None:
-    candidates = sorted((*SELECTOR_GROUPS, *(kind.value for kind in ALL_BOUNDARY_KINDS)))
+    candidates = sorted((*SELECTOR_GROUPS, *(str(kind) for kind in ALL_BOUNDARY_KINDS)))
     matches = [candidate for candidate in candidates if candidate.startswith(selector[:3])]
     return matches[0] if matches else None
 ####
@@ -598,7 +600,7 @@ def _has_scope_markers_table(path: Path) -> bool:
 
 def describe_policy(policy: MarkerPolicy) -> str:
     """Render a stable, human-readable policy summary."""
-    selectors = ", ".join(sorted([kind.value for kind in policy.selected])) or "(none)"
+    selectors = ", ".join(sorted(str(kind) for kind in policy.selected)) or "(none)"
     max_depth = "unlimited" if policy.max_depth is None else str(policy.max_depth)
     return "\n".join(
         (
@@ -621,7 +623,7 @@ def list_selectors() -> str:
     lines = ["presets:", *[f"  {name}" for name in PRESETS], "groups:"]
     lines.extend(f"  {name}" for name in SELECTOR_GROUPS)
     lines.append("selectors:")
-    lines.extend(f"  {kind.value}" for kind in sorted(ALL_BOUNDARY_KINDS, key=str))
+    lines.extend(f"  {kind}" for kind in sorted(ALL_BOUNDARY_KINDS, key=str))
     return "\n".join(lines)
 ####
 

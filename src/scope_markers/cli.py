@@ -364,7 +364,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 action = "mark" if explanation.will_mark else "skip"
                 print(
                     f"{args.explain}:{explanation.line_number}: {action} "
-                    f"{explanation.kind.value}: {explanation.reason}"
+                    f"{explanation.kind}: {explanation.reason}"
                 )
             ####
         except FILE_PROCESSING_ERRORS as error:

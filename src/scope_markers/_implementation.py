@@ -682,7 +682,7 @@ def _ignored_candidate_identities(
         key=lambda candidate: (
             candidate.boundary.line_number,
             candidate.boundary.index,
-            candidate.kind.value,
+            str(candidate.kind),
         ),
     )
     ignored: set[tuple[int, str]] = set()
@@ -1123,7 +1123,7 @@ def explain_source(
         will_mark = decision.allowed and identity not in selected
         reason = decision.reason
         if decision.allowed and not will_mark:
-            reason = f"duplicates selected {selected[identity].value} boundary"
+            reason = f"duplicates selected {selected[identity]} boundary"
         elif will_mark:
             selected[identity] = candidate.kind
         ####
