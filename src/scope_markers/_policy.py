@@ -174,23 +174,6 @@ class RuleOverride:
 ####
 
 
-_FINAL_CASE_RULE: Final = RuleOverride(require=frozenset(("final-case",)))
-
-
-def _remove_default_final_case_rule(rules: dict[BoundaryKind, RuleOverride]) -> None:
-    if rules.get(BoundaryKind.CLAUSE_MATCH_CASE) == _FINAL_CASE_RULE:
-        rules.pop(BoundaryKind.CLAUSE_MATCH_CASE)
-    ####
-####
-
-
-def _ensure_default_final_case_rule(rules: dict[BoundaryKind, RuleOverride]) -> None:
-    if BoundaryKind.CLAUSE_MATCH_CASE not in rules:
-        rules[BoundaryKind.CLAUSE_MATCH_CASE] = _FINAL_CASE_RULE
-    ####
-####
-
-
 @dataclass(frozen=True, slots=True)
 class PolicyDecision:
     """The result and human-readable reason for evaluating one candidate."""
@@ -216,6 +199,7 @@ class MarkerPolicy:
     rules: Mapping[BoundaryKind, RuleOverride] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    final_case_only: bool = False
     selector_extensions: frozenset[BoundaryKind] = field(
         default_factory=_empty_boundary_kind_set, repr=False, compare=False
     )
@@ -263,6 +247,13 @@ class MarkerPolicy:
         """Explain whether one fully analyzed candidate should be rendered."""
         if kind not in self.selected:
             return PolicyDecision(False, "selector is not enabled")
+        ####
+        if (
+                kind == BoundaryKind.CLAUSE_MATCH_CASE
+                and self.final_case_only
+                and "final-case" not in facts
+        ):
+            return PolicyDecision(False, "only the final match case is selected")
         ####
         rule = self.rules.get(kind, RuleOverride())
         stub_policy = rule.stub_policy or self.stub_policy
@@ -342,11 +333,7 @@ def statements_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
     return MarkerPolicy(
         selected=STATEMENTS_BOUNDARY_KINDS,
         stub_policy="mark" if mark_stubs else "skip",
-        rules=MappingProxyType(
-            {
-                BoundaryKind.CLAUSE_MATCH_CASE: _FINAL_CASE_RULE,
-            }
-        ),
+        final_case_only=True,
     )
 ####
 
@@ -431,6 +418,7 @@ def policy_with_cli_overrides(
     exclusions: frozenset[BoundaryKind] = policy.selector_exclusions
     base_selection = policy.selected
     rules = dict(policy.rules)
+    final_case_only = policy.final_case_only
     if preset is not None:
         if preset not in PRESETS:
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
@@ -438,17 +426,13 @@ def policy_with_cli_overrides(
         base_selection = PRESETS[preset]
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
-        if preset == "statements":
-            _ensure_default_final_case_rule(rules)
-        else:
-            _remove_default_final_case_rule(rules)
-        ####
+        final_case_only = preset == "statements"
     ####
     if select:
         base_selection = expand_selectors(selector_values(select))
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
-        _remove_default_final_case_rule(rules)
+        final_case_only = False
     ####
     extensions |= expand_selectors(selector_values(extend_select))
     exclusions |= expand_selectors(selector_values(ignore))
@@ -458,6 +442,7 @@ def policy_with_cli_overrides(
         "selector_extensions": extensions,
         "selector_exclusions": exclusions,
         "rules": MappingProxyType(rules),
+        "final_case_only": final_case_only,
     }
     for key, value in (
             ("skip_inline_suites", skip_inline_suites),
@@ -542,21 +527,18 @@ def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> Mar
     exclusions = policy.selector_exclusions
     base_selection = policy.selected
     rules = dict(policy.rules)
+    final_case_only = policy.final_case_only
     if "preset" in settings:
         preset = _string(settings, "preset", "statements")
         if preset not in PRESETS:
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
         ####
         base_selection = PRESETS[preset]
-        if preset == "statements":
-            _ensure_default_final_case_rule(rules)
-        else:
-            _remove_default_final_case_rule(rules)
-        ####
+        final_case_only = preset == "statements"
     ####
     if "select" in settings:
         base_selection = expand_selectors(_string_array(settings, "select"))
-        _remove_default_final_case_rule(rules)
+        final_case_only = False
     ####
     extensions |= expand_selectors(_string_array(settings, "extend-select"))
     exclusions |= expand_selectors(_string_array(settings, "ignore"))
@@ -568,6 +550,7 @@ def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> Mar
             selector_extensions=extensions,
             selector_exclusions=exclusions,
             rules=MappingProxyType(rules),
+            final_case_only=final_case_only,
         ),
         settings,
     )

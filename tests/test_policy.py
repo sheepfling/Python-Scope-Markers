@@ -50,6 +50,29 @@ def test_all_preset_marks_every_match_case(tmp_path: Path) -> None:
 ####
 
 
+def test_statements_preset_combines_final_case_constraint_with_rule_filters(
+        tmp_path: Path,
+) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(
+        'preset = "statements"\n'
+        "\n"
+        '[rules."clause.match.case"]\n'
+        "min-body-lines = 1\n",
+        encoding="utf-8",
+    )
+    source = (
+        "match value:\n"
+        "    case 1:\n"
+        "        handle_one()\n"
+        "    case _:\n"
+        "        handle_other()\n"
+    )
+
+    assert api.format_source(source, policy=api.load_policy(config)).count("####") == 2
+####
+
+
 @pytest.mark.parametrize("selection", ("all", "clause.match.case"))
 def test_explicit_selection_does_not_inherit_final_case_filter(
         selection: str, tmp_path: Path
