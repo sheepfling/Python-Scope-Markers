@@ -1712,9 +1712,15 @@ def _is_discoverable_file(
         include_markdown: bool,
 ) -> bool:
     """Return whether recursive discovery may process a supported regular file."""
-    return _is_supported_source_file(
+    return _is_regular_discovered_file(path) and _is_supported_source_file(
         path, root, include_patterns, include_stubs, include_markdown
     ) and not _is_excluded_path(path, root, exclude_patterns)
+####
+
+
+def _is_regular_discovered_file(path: Path) -> bool:
+    """Return whether recursive discovery may admit this filesystem entry."""
+    return not path.is_symlink() and path.is_file()
 ####
 
 
@@ -1749,9 +1755,6 @@ def _walk_python_files(
         names[:] = kept_directories
         for name in sorted(filenames):
             candidate = current / name
-            if candidate.is_symlink() or not candidate.is_file():
-                continue
-            ####
             if _is_discoverable_file(
                     candidate,
                     root,
