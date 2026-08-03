@@ -84,8 +84,7 @@ def _fence_blocks(lines: Sequence[str]) -> tuple[_FenceBlock, ...]:
             closing_index += 1
         ####
         if closing_index >= len(lines):
-            index += 1
-            continue
+            break
         ####
         blocks.append(
             _FenceBlock(

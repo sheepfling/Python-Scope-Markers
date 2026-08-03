@@ -161,6 +161,19 @@ def test_format_markdown_source_skips_nested_text_fence_and_processes_later_pyth
 ####
 
 
+def test_format_markdown_source_skips_content_after_unterminated_text_fence() -> None:
+    source = (
+        "~~~text\n"
+        "```python\n"
+        "def literal():\n"
+        "    pass\n"
+        "```\n"
+    )
+
+    assert api.format_markdown_source(source) == source
+####
+
+
 def test_format_markdown_source_preserves_indented_fence_prefix() -> None:
     source = (
         "  ```python\n"
