@@ -18,9 +18,13 @@ from ._implementation import (
 
 PYTHON_FENCE_LANGUAGES = frozenset({"py", "python", "python3"})
 _FENCE_PATTERN = re.compile(r"^( {0,3})([`~]{3,})(.*)$")
+_FENCE_IGNORE_PATTERN = re.compile(
+    r"(?:\bno-scope-markers\b|\bscope-markers\s*[:=]\s*(?:off|ignore|false)\b)",
+    re.IGNORECASE,
+)
 
 
-def _fence_opening(line: str) -> tuple[str, str] | None:
+def _fence_opening(line: str) -> tuple[str, str, bool] | None:
     body = line.rstrip("\r\n")
     match = _FENCE_PATTERN.match(body)
     if match is None:
@@ -30,11 +34,12 @@ def _fence_opening(line: str) -> tuple[str, str] | None:
     if len(set(fence)) != 1 or (fence[0] == "`" and "`" in match.group(3)):
         return None
     ####
-    language = match.group(3).strip().split(maxsplit=1)
+    info = match.group(3).strip()
+    language = info.split(maxsplit=1)
     if not language or language[0].casefold() not in PYTHON_FENCE_LANGUAGES:
         return None
     ####
-    return match.group(1), fence
+    return match.group(1), fence, _FENCE_IGNORE_PATTERN.search(info) is not None
 ####
 
 
@@ -108,7 +113,7 @@ def format_markdown_source(
             index += 1
             continue
         ####
-        indentation, fence = opening
+        indentation, fence, ignore = opening
         closing_index = index + 1
         while closing_index < len(lines) and not _is_fence_closing(
                 lines[closing_index], indentation, fence
@@ -117,6 +122,10 @@ def format_markdown_source(
         ####
         if closing_index >= len(lines):
             index += 1
+            continue
+        ####
+        if ignore:
+            index = closing_index + 1
             continue
         ####
         original_payload = tuple(lines[index + 1:closing_index])

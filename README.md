@@ -295,9 +295,20 @@ scope-markers --markdown --strip --fix README.md docs
 ```
 
 Only `python`, `py`, and `python3` fenced blocks are processed. Other Markdown
-content and non-Python fences remain unchanged. Each Python fence must be valid
-as a standalone Python source fragment; a fence cannot continue a class or
-function from another fence.
+content and non-Python fences remain unchanged. To preserve a Python example
+literally, add `no-scope-markers` to its fence info string:
+
+````markdown
+```python no-scope-markers
+if ready:
+    pass
+```
+````
+
+The equivalent `scope-markers: off` and `scope-markers=ignore` forms are also
+accepted. Each processed Python fence must be valid as a standalone Python
+source fragment; a fence cannot continue a class or function from another
+fence.
 
 Exit statuses are stable:
 
