@@ -239,6 +239,8 @@ Scope markers must be the last tool that rewrites Python layout. They are
 ordinary comments to Ruff, Black, YAPF, autopep8, and editor formatters; those
 tools do not know that `####` represents a scope boundary.
 
+### Recommended sequence
+
 Use this order whenever more than one tool processes the same files:
 
 ```text
@@ -249,7 +251,21 @@ Use this order whenever more than one tool processes the same files:
 5. Read-only checks: Flake8, Pyright, tests, and packaging
 ```
 
-For this project, the corresponding command sequence is:
+### Formatter conflicts
+
+Ruff format, Black, YAPF, autopep8, and editor formatters may move code,
+normalize blank lines around markers, or rewrite multiline strings without
+regenerating the affected markers. Running one after Scope Markers can therefore
+make a previously clean file appear changed again.
+
+If a formatter must run after Scope Markers, run `scope-markers --fix` again as
+the final rewriting step. For editor format-on-save, configure the ordinary
+formatter before the marker command or exclude marker-managed files from the
+later formatter.
+
+### Ruff and Black
+
+Run Ruff autofixes and ordinary formatting before Scope Markers:
 
 ```bash
 python -m ruff check --fix src tests scripts
@@ -260,15 +276,11 @@ python scripts/check_pyright.py
 python -m pytest
 ```
 
-The important rule is that every tool capable of changing source text runs
-before `scope-markers`. If Black or Ruff runs afterward, it may move code,
-normalize blank lines around markers, or rewrite multiline strings without
-regenerating the affected markers. The next marker check can then report
-changes, producing formatter churn.
+Black and Ruff are intentionally not run as post-marker format checks. This
+repository's `scripts/check_black.py` removes standalone markers in a temporary
+copy before asking Black to format and check the source.
 
-If an editor formats on save, configure it either to run before the marker step
-or to exclude marker-managed files. If a downstream formatter must run later,
-run `scope-markers --fix` again as the final step before committing.
+### Flake8 and read-only tools
 
 Flake8 is safe after marker insertion, but its configuration needs to account
 for standalone marker comments. Use the repository's `.flake8` settings as a
@@ -276,8 +288,12 @@ starting point: a 100-character limit and ignores for `E203`, `E302`, and
 `E303`. `E203` is compatible with Black; `E302` and `E303` otherwise interpret
 the marker comments as unexpected function or class spacing.
 
-For pre-commit, put all rewriting hooks before the marker hook and read-only
-hooks after it:
+Pyright, tests, packaging checks, and rumdl are also read-only with respect to
+Python marker placement and belong after Scope Markers.
+
+### Pre-commit and editor hooks
+
+Put all rewriting hooks before the marker hook and read-only hooks after it:
 
 ```yaml
 repos:
@@ -300,6 +316,21 @@ When adopting scope markers in an existing repository, run the ordinary
 formatter once, then run `scope-markers --fix`. This establishes a clean
 baseline. Keep the same ordering in local commands, editor actions, hooks, and
 CI so each environment produces the same result.
+
+### This repository's CI example
+
+The canonical executable sequence is maintained in
+[`scripts/ci.py`](scripts/ci.py) and run by
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Run it locally with:
+
+```bash
+python scripts/ci.py
+```
+
+Its formatter boundary is explicit: Ruff checks first, the compatibility check
+verifies Black on marker-free temporary copies, and `scope-markers` runs before
+the final project-specific validation. Use `python scripts/ci.py --fix` for a
+local cleanup pass that allows the safe rewriting steps to update files.
 
 ## Marker style detection
 
