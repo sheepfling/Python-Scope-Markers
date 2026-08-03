@@ -61,10 +61,10 @@ def test_format_markdown_source_processes_every_python_fence() -> None:
         "    pass\n"
         "```\n"
         "\n"
-        "```python\n"
+        "~~~py\n"
         "class Second:\n"
         "    pass\n"
-        "```\n"
+        "~~~\n"
     )
 
     formatted = api.format_markdown_source(source)
@@ -76,13 +76,42 @@ def test_format_markdown_source_processes_every_python_fence() -> None:
         "####\n"
         "```\n"
         "\n"
-        "```python\n"
+        "~~~py\n"
         "class Second:\n"
         "    pass\n"
         "####\n"
-        "```\n"
+        "~~~\n"
     )
     assert api.format_markdown_source(formatted) == formatted
+####
+
+
+def test_format_markdown_source_processes_later_fences_after_strip_shrinks_one(
+) -> None:
+    source = (
+        "```python\n"
+        "def first():\n"
+        "    pass\n"
+        "####\n"
+        "```\n"
+        "\n"
+        "```python\n"
+        "def second():\n"
+        "    pass\n"
+        "```\n"
+    )
+
+    assert api.format_markdown_source(source, strip=True) == (
+        "```python\n"
+        "def first():\n"
+        "    pass\n"
+        "```\n"
+        "\n"
+        "```python\n"
+        "def second():\n"
+        "    pass\n"
+        "```\n"
+    )
 ####
 
 
@@ -98,6 +127,37 @@ def test_format_markdown_source_skips_python_looking_fences_inside_text() -> Non
     )
 
     assert api.format_markdown_source(source) == source
+####
+
+
+def test_format_markdown_source_skips_nested_text_fence_and_processes_later_python(
+) -> None:
+    source = (
+        "~~~text\n"
+        "```python\n"
+        "if ready:\n"
+        "    pass\n"
+        "```\n"
+        "~~~\n"
+        "```python\n"
+        "def later():\n"
+        "    pass\n"
+        "```\n"
+    )
+
+    assert api.format_markdown_source(source) == (
+        "~~~text\n"
+        "```python\n"
+        "if ready:\n"
+        "    pass\n"
+        "```\n"
+        "~~~\n"
+        "```python\n"
+        "def later():\n"
+        "    pass\n"
+        "####\n"
+        "```\n"
+    )
 ####
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from ._implementation import (
@@ -23,6 +24,18 @@ _PYTHON_IGNORE_PATTERN = re.compile(
     r"^#\s*(?:no-scope-markers|scope-markers\s*[:=]\s*(?:off|ignore|false))\s*$",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _FenceBlock:
+    """One complete Markdown fence span in the original line sequence."""
+
+    opening_index: int
+    closing_index: int
+    indentation: str
+    fence: str
+    info: str
+####
 
 
 def _fence_parts(line: str) -> tuple[str, str, str] | None:
@@ -50,6 +63,42 @@ def _is_fence_closing(line: str, fence: str) -> bool:
         return False
     ####
     return not remainder[len(fence):].strip(fence[0] + " \t")
+####
+
+
+def _fence_blocks(lines: Sequence[str]) -> tuple[_FenceBlock, ...]:
+    """Collect complete, non-nested fence spans without mutating ``lines``."""
+    blocks: list[_FenceBlock] = []
+    index = 0
+    while index < len(lines):
+        parts = _fence_parts(lines[index])
+        if parts is None:
+            index += 1
+            continue
+        ####
+        indentation, fence, info = parts
+        closing_index = index + 1
+        while closing_index < len(lines) and not _is_fence_closing(
+                lines[closing_index], fence
+        ):
+            closing_index += 1
+        ####
+        if closing_index >= len(lines):
+            index += 1
+            continue
+        ####
+        blocks.append(
+            _FenceBlock(
+                opening_index=index,
+                closing_index=closing_index,
+                indentation=indentation,
+                fence=fence,
+                info=info,
+            )
+        )
+        index = closing_index + 1
+    ####
+    return tuple(blocks)
 ####
 
 
@@ -116,43 +165,28 @@ def format_markdown_source(
     """Format Python fences in Markdown while preserving surrounding text."""
     lines = _physical_lines(source)
     formatted_lines = list(lines)
-    index = 0
-    while index < len(lines):
-        parts = _fence_parts(lines[index])
-        if parts is None:
-            index += 1
-            continue
-        ####
-        indentation, fence, info = parts
-        closing_index = index + 1
-        while closing_index < len(lines) and not _is_fence_closing(
-                lines[closing_index], fence
-        ):
-            closing_index += 1
-        ####
-        if closing_index >= len(lines):
-            index += 1
-            continue
-        ####
-        language = info.split(maxsplit=1)
+    for block in reversed(_fence_blocks(lines)):
+        language = block.info.split(maxsplit=1)
         if not language or language[0].casefold() not in PYTHON_FENCE_LANGUAGES:
-            index = closing_index + 1
             continue
         ####
-        original_payload = tuple(lines[index + 1:closing_index])
+        original_payload = tuple(
+            lines[block.opening_index + 1:block.closing_index]
+        )
         if _has_python_ignore_directive(
-                _remove_fence_indentation(original_payload, indentation)
+                _remove_fence_indentation(original_payload, block.indentation)
         ):
-            index = closing_index + 1
             continue
         ####
-        payload = "".join(_remove_fence_indentation(original_payload, indentation))
+        payload = "".join(
+            _remove_fence_indentation(original_payload, block.indentation)
+        )
         if strip:
             formatted_payload = strip_markers(payload)
         else:
             formatted_payload = format_source(
                 payload,
-                filename=f"{filename}:{index + 1}",
+                filename=f"{filename}:{block.opening_index + 1}",
                 mark_stubs=mark_stubs,
                 indent_width=indent_width,
                 policy=policy,
@@ -160,11 +194,9 @@ def format_markdown_source(
         ####
         formatted_payload_lines = _physical_lines(formatted_payload)
         restored = _restore_fence_indentation(
-            formatted_payload_lines, original_payload, indentation
+            formatted_payload_lines, original_payload, block.indentation
         )
-        formatted_lines[index + 1:closing_index] = restored
-        lines = tuple(formatted_lines)
-        index = index + 2 + len(restored)
+        formatted_lines[block.opening_index + 1:block.closing_index] = restored
     ####
     return "".join(formatted_lines)
 ####
