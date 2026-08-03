@@ -1413,6 +1413,37 @@ def test_ignore_next_block_before_clause_keeps_enclosing_boundary(
 ####
 
 
+@pytest.mark.parametrize(
+    "source",
+    (
+        (
+            "# scope-markers: ignore-next-block\n"
+            "if ready: work()\n"
+        ),
+        (
+            "# scope-markers: ignore-next-block\n"
+            "for item in items: consume(item)\n"
+        ),
+        (
+            "# scope-markers: ignore-next-block\n"
+            "while ready: work()\n"
+        ),
+        (
+            "# scope-markers: ignore-next-block\n"
+            "try: work()\n"
+            "except OSError: recover()\n"
+        ),
+    ),
+)
+def test_ignore_next_block_prefers_complete_statement_on_shared_header(
+        source: str,
+) -> None:
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    assert scope_markers.format_source(source, policy=policy) == source
+####
+
+
 def test_ignore_next_clause_targets_logical_candidate_not_shared_marker() -> None:
     source = (
         "if ready:\n"

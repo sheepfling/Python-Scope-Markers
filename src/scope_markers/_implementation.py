@@ -654,6 +654,7 @@ def _ignored_candidate_identities(
         ),
         key=lambda candidate: (
             candidate.boundary.line_number,
+            1 if _is_clause_candidate(candidate) else 0,
             candidate.boundary.index,
             str(candidate.kind),
         ),
