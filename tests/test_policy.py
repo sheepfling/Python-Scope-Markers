@@ -111,6 +111,71 @@ def test_method_selector_distinguishes_class_methods_from_functions() -> None:
 ####
 
 
+@pytest.mark.parametrize(
+    ("preset", "marker_count"),
+    (
+        ("definitions", 3),
+        ("logic", 3),
+        ("statements", 6),
+        ("all", 8),
+    ),
+)
+def test_preset_tiers_have_distinct_boundary_density(
+        preset: str, marker_count: int, tmp_path: Path
+) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(f'preset = "{preset}"\n', encoding="utf-8")
+    source = (
+        "def standalone() -> None:\n"
+        "    pass\n"
+        "class Example:\n"
+        "    def method(self) -> None:\n"
+        "        pass\n"
+        "if ready:\n"
+        "    work()\n"
+        "else:\n"
+        "    recover()\n"
+        "match value:\n"
+        "    case 1:\n"
+        "        one()\n"
+        "    case _:\n"
+        "        other()\n"
+    )
+
+    policy = api.load_policy(config)
+    explanations = api.explain_source(source, policy=policy)
+    marked_kinds = {explanation.kind for explanation in explanations if explanation.will_mark}
+
+    assert api.format_source(source, policy=policy).count("####") == marker_count
+    if preset == "definitions":
+        assert marked_kinds == {
+            api.BoundaryKind.STATEMENT_FUNCTION,
+            api.BoundaryKind.STATEMENT_METHOD,
+            api.BoundaryKind.STATEMENT_CLASS,
+        }
+    elif preset == "logic":
+        assert marked_kinds == {
+            api.BoundaryKind.STATEMENT_IF,
+            api.BoundaryKind.STATEMENT_MATCH,
+            api.BoundaryKind.CLAUSE_MATCH_CASE,
+        }
+    elif preset == "statements":
+        assert api.BoundaryKind.STATEMENT_METHOD in marked_kinds
+        assert api.BoundaryKind.CLAUSE_MATCH_CASE in marked_kinds
+    else:
+        assert api.BoundaryKind.CLAUSE_IF_BODY in marked_kinds
+        assert len(
+            [
+                explanation
+                for explanation in explanations
+                if explanation.kind is api.BoundaryKind.CLAUSE_MATCH_CASE
+                and explanation.will_mark
+            ]
+        ) == 2
+    ####
+####
+
+
 def test_statements_preset_combines_final_case_constraint_with_rule_filters(
         tmp_path: Path,
 ) -> None:
