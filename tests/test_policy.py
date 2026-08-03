@@ -267,6 +267,35 @@ def test_per_file_preset_preserves_accumulated_selector_arithmetic(tmp_path: Pat
 ####
 
 
+def test_per_file_select_replaces_default_match_case_filter(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    source = tmp_path / "src" / "example.py"
+    source.parent.mkdir()
+    config.write_text(
+        'preset = "statements"\n'
+        "\n"
+        "[[per-file]]\n"
+        'patterns = ["src/**"]\n'
+        'select = ["clause.match.case"]\n',
+        encoding="utf-8",
+    )
+    source.write_text(
+        "match value:\n"
+        "    case 1:\n"
+        "        handle_one()\n"
+        "    case _:\n"
+        "        handle_other()\n",
+        encoding="utf-8",
+    )
+
+    policy = api.resolve_policy(config, source)
+
+    assert api.format_source(source.read_text(encoding="utf-8"), policy=policy).count(
+        "####"
+    ) == 2
+####
+
+
 def test_cli_overrides_configuration_for_every_policy_layer(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
