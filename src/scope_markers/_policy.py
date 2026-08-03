@@ -557,6 +557,9 @@ def _per_file_overrides(settings: Mapping[str, object]) -> tuple[_PerFileOverrid
         if not patterns:
             raise PolicyError(f"per-file override {index} requires at least one pattern")
         ####
+        if any(not pattern for pattern in patterns):
+            raise PolicyError(f"per-file override {index} patterns must not be empty")
+        ####
         overrides.append(
             _PerFileOverride(
                 patterns=patterns,

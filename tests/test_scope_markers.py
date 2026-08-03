@@ -2407,6 +2407,13 @@ def test_per_file_policy_overrides_are_strict(tmp_path: Path) -> None:
     with pytest.raises(api.PolicyError, match="requires at least one pattern"):
         api.load_policy(config)
     ####
+
+    config.write_text(
+        '[[per-file]]\npatterns = [""]\n', encoding="utf-8"
+    )
+    with pytest.raises(api.PolicyError, match="patterns must not be empty"):
+        api.load_policy(config)
+    ####
 ####
 
 
@@ -2527,15 +2534,29 @@ def test_cli_policy_options_are_listed_and_rejected_while_stripping(
 ####
 
 
+@pytest.mark.parametrize("option", ("--select", "--extend-select", "--ignore"))
 @pytest.mark.parametrize("selector", ("", ",", "statement.if,", ",statement.if"))
 def test_cli_rejects_empty_selector_components(
-        selector: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        option: str, selector: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     source = tmp_path / "example.py"
     source.write_text("def example():\n    pass\n", encoding="utf-8")
 
-    assert cli.main(["--select", selector, "--quiet", str(source)]) == 2
+    assert cli.main([option, selector, "--quiet", str(source)]) == 2
     assert "selector names must not be empty" in capsys.readouterr().err
+####
+
+
+@pytest.mark.parametrize("option", ("--include", "--exclude"))
+def test_cli_rejects_empty_discovery_patterns(
+        option: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.main([option, "", str(tmp_path)])
+    ####
+
+    assert error.value.code == 2
+    assert "must not be empty" in capsys.readouterr().err
 ####
 
 

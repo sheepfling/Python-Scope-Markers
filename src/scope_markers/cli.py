@@ -78,6 +78,14 @@ def _non_negative_integer(value: str) -> int:
 ####
 
 
+def _non_empty_pattern(value: str) -> str:
+    if not value:
+        raise argparse.ArgumentTypeError("must not be empty")
+    ####
+    return value
+####
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=_DESCRIPTION,
@@ -233,6 +241,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--include",
         action="append",
         default=[],
+        type=_non_empty_pattern,
         metavar="PATTERN",
         help="include additional recursively discovered paths matching this glob; "
         "repeat for multiple patterns",
@@ -241,6 +250,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--exclude",
         action="append",
         default=[],
+        type=_non_empty_pattern,
         metavar="PATTERN",
         help="skip recursively discovered paths matching this glob; repeat for "
         "multiple patterns (explicit files are still processed)",
