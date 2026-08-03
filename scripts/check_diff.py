@@ -10,6 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from scope_markers.api import inspect_file, inspect_stripped_file
+from scripts._project import temporary_prefix
 
 DIFF_CASES: tuple[tuple[str, Path, bytes], ...] = (
     (
@@ -66,7 +67,7 @@ def _run_diff_case(
         *,
         strip: bool = False,
 ) -> str | None:
-    with TemporaryDirectory(prefix=f"scope-markers-diff-{name}-") as raw:
+    with TemporaryDirectory(prefix=f"{temporary_prefix('diff')}{name}-") as raw:
         root = Path(raw)
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,7 +124,7 @@ def _run_diff_case(
 
 
 def _check_bare_cr() -> str | None:
-    with TemporaryDirectory(prefix="scope-markers-diff-bare-cr-") as raw:
+    with TemporaryDirectory(prefix=temporary_prefix("diff-bare-cr")) as raw:
         root = Path(raw)
         path = root / "example.py"
         path.write_bytes(b"def example():\r    pass\r")
@@ -149,7 +150,7 @@ def _check_newline_filename(git: str) -> str | None:
     if os.name == "nt":
         return None
     ####
-    with TemporaryDirectory(prefix="scope-markers-diff-newline-name-") as raw:
+    with TemporaryDirectory(prefix=temporary_prefix("diff-newline-name")) as raw:
         root = Path(raw)
         path = root / "line\nbreak.py"
         path.write_text("def example():\n    pass\n", encoding="utf-8")
@@ -185,7 +186,7 @@ def _check_newline_filename(git: str) -> str | None:
 
 
 def _check_subdirectory_path(git: str) -> str | None:
-    with TemporaryDirectory(prefix="scope-markers-diff-subdirectory-") as raw:
+    with TemporaryDirectory(prefix=temporary_prefix("diff-subdirectory")) as raw:
         root = Path(raw)
         (root / "src").mkdir()
         tests = root / "tests"
@@ -239,7 +240,7 @@ def _check_subdirectory_path(git: str) -> str | None:
 
 
 def _check_multiple_file_output(git: str) -> str | None:
-    with TemporaryDirectory(prefix="scope-markers-diff-multiple-") as raw:
+    with TemporaryDirectory(prefix=temporary_prefix("diff-multiple")) as raw:
         root = Path(raw)
         utf8 = root / "utf8.py"
         cp1252 = root / "cp1252.py"
@@ -317,7 +318,9 @@ def _check_autocrlf_modes(git: str) -> str | None:
     )
     for mode in AUTOCRLF_MODES:
         for name, source in newline_cases:
-            with TemporaryDirectory(prefix=f"scope-markers-autocrlf-{mode}-{name}-") as raw:
+            with TemporaryDirectory(
+                    prefix=f"{temporary_prefix('autocrlf')}{mode}-{name}-"
+            ) as raw:
                 root = Path(raw)
                 path = root / "example.py"
                 path.write_bytes(source)

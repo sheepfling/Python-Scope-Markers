@@ -865,14 +865,14 @@ def test_extra_blank_lines_do_not_push_markers_to_the_end() -> None:
 def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
     assert ci.ci_commands("python311") == (
         ("python311", "-m", "pytest", "-q"),
-        ("python311", "scripts/check_diff.py"),
+        ("python311", "-m", "scripts.check_diff"),
         ("python311", "-m", "ruff", "check", "src", "scripts", "tests"),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
-        ("python311", "scripts/check_black.py"),
-        ("python311", "scripts/check_pyright.py"),
-        ("python311", "scripts/check_build.py"),
+        ("python311", "-m", "scripts.check_black"),
+        ("python311", "-m", "scripts.check_pyright"),
+        ("python311", "-m", "scripts.check_build"),
         ("python311", "-m", "scope_markers", "src", "scripts", "tests"),
-        ("python311", "scripts/check_rumdl.py"),
+        ("python311", "-m", "scripts.check_rumdl"),
     )
 ####
 
@@ -913,7 +913,7 @@ def test_check_diff_main_calls_the_bare_cr_check_without_git_argument(
 def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
     assert ci.ci_commands("python311", fix=True) == (
         ("python311", "-m", "pytest", "-q"),
-        ("python311", "scripts/check_diff.py"),
+        ("python311", "-m", "scripts.check_diff"),
         (
             "python311",
             "-m",
@@ -925,9 +925,9 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
             "tests",
         ),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
-        ("python311", "scripts/check_black.py"),
-        ("python311", "scripts/check_pyright.py"),
-        ("python311", "scripts/check_build.py"),
+        ("python311", "-m", "scripts.check_black"),
+        ("python311", "-m", "scripts.check_pyright"),
+        ("python311", "-m", "scripts.check_build"),
         (
             "python311",
             "-m",
@@ -937,7 +937,7 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
             "scripts",
             "tests",
         ),
-        ("python311", "scripts/check_rumdl.py", "--fix"),
+        ("python311", "-m", "scripts.check_rumdl", "--fix"),
     )
 ####
 

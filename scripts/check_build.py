@@ -7,11 +7,13 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from scripts._project import temporary_prefix
+
 ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> int:
     """Verify wheel packaging without reusing stale distribution artifacts."""
-    with TemporaryDirectory(prefix="scope-markers-wheel-") as output:
+    with TemporaryDirectory(prefix=temporary_prefix("wheel")) as output:
         return subprocess.run(
             [
                 sys.executable,

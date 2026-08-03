@@ -9,6 +9,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from scripts._project import PACKAGE_NAME, PROJECT_SLUG
+
 ROOT = Path(__file__).resolve().parents[1]
 
 def ci_commands(
@@ -22,23 +24,23 @@ def ci_commands(
         ruff += ("--fix",)
     ####
     ruff += ("src", "scripts", "tests")
-    scope_markers = (python, "-m", "scope_markers")
+    scope_markers = (python, "-m", PACKAGE_NAME)
     if fix:
         scope_markers += ("--fix",)
     ####
     scope_markers += ("src", "scripts", "tests")
-    rumdl = (python, "scripts/check_rumdl.py")
+    rumdl = (python, "-m", "scripts.check_rumdl")
     if fix:
         rumdl += ("--fix",)
     ####
     return (
         (python, "-m", "pytest", "-q"),
-        (python, "scripts/check_diff.py"),
+        (python, "-m", "scripts.check_diff"),
         ruff,
         (python, "-m", "flake8", "src", "scripts", "tests"),
-        (python, "scripts/check_black.py"),
-        (python, "scripts/check_pyright.py"),
-        (python, "scripts/check_build.py"),
+        (python, "-m", "scripts.check_black"),
+        (python, "-m", "scripts.check_pyright"),
+        (python, "-m", "scripts.check_build"),
         scope_markers,
         rumdl,
     )
@@ -71,7 +73,7 @@ def main(argv: Sequence[str] = ()) -> int:
             "the first failure."
         ),
         epilog=(
-            "By default every check is read-only. With --fix, Ruff, scope-markers, "
+            f"By default every check is read-only. With --fix, {PROJECT_SLUG}, "
             "and rumdl may update files as part of validation.\n\n"
             "examples:\n"
             "  python -m scripts.ci\n"
@@ -82,7 +84,7 @@ def main(argv: Sequence[str] = ()) -> int:
     parser.add_argument(
         "--fix",
         action="store_true",
-        help="allow Ruff, scope-markers, and rumdl to rewrite files during validation",
+        help=f"allow Ruff, {PROJECT_SLUG}, and rumdl to rewrite files during validation",
     )
     args = parser.parse_args(argv)
     commands = ci_commands(fix=True) if args.fix else ci_commands()

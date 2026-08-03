@@ -21,12 +21,6 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
-[project.urls]
-Homepage = "https://github.com/sheepfling/scope-markers"
-Repository = "https://github.com/sheepfling/scope-markers"
-Issues = "https://github.com/sheepfling/scope-markers/issues"
-Changelog = "https://github.com/sheepfling/scope-markers/blob/main/CHANGELOG.md"
-
 [project.optional-dependencies]
 dev = [
     "black>=24",
