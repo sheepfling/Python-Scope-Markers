@@ -1260,6 +1260,14 @@ def test_file_scope_marker_opt_out_preserves_source() -> None:
 ####
 
 
+def test_file_scope_marker_opt_out_preserves_unterminated_source() -> None:
+    source = "# scope-markers: off\nvalue = (\n"
+
+    assert scope_markers.format_source(source) == source
+    assert scope_markers.explain_source(source) == ()
+####
+
+
 def test_ignore_next_skips_one_boundary_but_not_nested_scopes() -> None:
     source = (
         "# scope-markers: ignore-next\n"
@@ -2516,6 +2524,37 @@ def test_cli_policy_options_are_listed_and_rejected_while_stripping(
 
     assert error.value.code == 2
     assert "marker-policy options cannot be used with --strip" in capsys.readouterr().err
+####
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    (
+        (("--preset", "unknown"), "unknown preset"),
+        (("--select", "statement.unknown"), "unknown selector"),
+    ),
+)
+def test_cli_validates_policy_options_without_python_files(
+        arguments: tuple[str, str], message: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    assert cli.main([*arguments, "--quiet", str(empty)]) == 2
+    assert message in capsys.readouterr().err
+####
+
+
+def test_cli_validates_invalid_config_without_python_files(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    config = tmp_path / "scope-markers.toml"
+    config.write_text('select = ["statement.unknown"]\n', encoding="utf-8")
+
+    assert cli.main(["--config", str(config), "--quiet", str(empty)]) == 2
+    assert "unknown selector" in capsys.readouterr().err
 ####
 
 

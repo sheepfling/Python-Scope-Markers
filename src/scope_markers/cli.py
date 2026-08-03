@@ -385,6 +385,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report_errors(errors)
         return 2
     ####
+    if not strip:
+        for policy_path in paths:
+            try:
+                resolved_policy(policy_path)
+            except PolicyError as error:
+                errors.append(format_error(policy_path, error))
+                _report_errors(errors)
+                return 2
+            ####
+        ####
+    ####
     changed: list[Path] = []
     processed_files = 0
     for path in files:

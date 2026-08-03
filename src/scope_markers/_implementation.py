@@ -157,6 +157,12 @@ def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]
         (row for row, line in enumerate(lines, start=1) if _line_body(line).strip()),
         None,
     )
+    if first_content_row is not None:
+        first_content = _line_body(lines[first_content_row - 1]).strip(" \t\f").casefold()
+        if first_content == "# scope-markers: off":
+            return True, frozenset()
+        ####
+    ####
     ignore_next_rows: set[int] = set()
     off_rows: set[int] = set()
     for token in _token_stream("".join(lines)):
