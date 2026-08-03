@@ -88,6 +88,9 @@ def _diff_encoding(encoding: str) -> str:
 ####
 
 
+BOM = "\N{ZERO WIDTH NO-BREAK SPACE}"
+
+
 def _contains_bare_cr(source: str) -> bool:
     return any(line.endswith("\r") for line in physical_lines(source))
 ####
@@ -104,8 +107,8 @@ def render_diff(inspection: FileInspection) -> tuple[bytes, ...]:
         )
     ####
     if inspection.encoding.casefold() == "utf-8-sig":
-        source = f"\ufeff{source}"
-        formatted = f"\ufeff{formatted}"
+        source = f"{BOM}{source}"
+        formatted = f"{BOM}{formatted}"
     ####
     path = _diff_path(inspection.path)
     source_lines = _diff_lines(source)
@@ -180,7 +183,7 @@ def _diff_lines(source: str) -> list[str]:
     for line in physical_lines(source):
         if line.endswith("\r\n"):
             # Keep CRLF in the record so patches apply to CRLF files. The
-            # embedded CRLF also supplies difflib's required record ending.
+            # The embedded CRLF supplies the record ending required by difflib.
             lines.append(line)
         elif line.endswith(("\r", "\n")):
             # Bare CR is unreachable from the CLI, which rejects it before

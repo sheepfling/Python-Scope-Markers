@@ -121,7 +121,7 @@ class BoundaryExplanation:
 
 @dataclass(frozen=True, slots=True)
 class _BoundaryCandidate:
-    """A policy-independent analysed marker insertion candidate."""
+    """A policy-independent analyzed marker insertion candidate."""
 
     kind: BoundaryKind
     boundary: ScopeBoundary
@@ -406,6 +406,20 @@ def _is_elif(
             and parent_width is not None
             and parent_width == node_width
     )
+####
+
+
+def _next_elif(
+        node: ast.If, parents: Mapping[int, ast.AST], lines: Sequence[str]
+) -> ast.If | None:
+    if len(node.orelse) != 1:
+        return None
+    ####
+    candidate = node.orelse[0]
+    if isinstance(candidate, ast.If) and _is_elif(candidate, parents, lines):
+        return candidate
+    ####
+    return None
 ####
 
 
@@ -1149,12 +1163,8 @@ def _if_suites(
 ) -> tuple[Sequence[ast.stmt], ...]:
     suites: list[Sequence[ast.stmt]] = [node.body]
     current = node
-    while (
-            len(current.orelse) == 1
-            and isinstance(current.orelse[0], ast.If)
-            and _is_elif(current.orelse[0], parents, lines)
-    ):
-        current = current.orelse[0]
+    while (next_elif := _next_elif(current, parents, lines)) is not None:
+        current = next_elif
         suites.append(current.body)
     ####
     if current.orelse:
@@ -1245,13 +1255,9 @@ def _candidate_facts(
     if isinstance(node, ast.If):
         current = node
         has_elif = False
-        while (
-                len(current.orelse) == 1
-                and isinstance(current.orelse[0], ast.If)
-                and _is_elif(current.orelse[0], parents, lines)
-        ):
+        while (next_elif := _next_elif(current, parents, lines)) is not None:
             has_elif = True
-            current = current.orelse[0]
+            current = next_elif
         ####
         if has_elif:
             facts.add("has-elif")
@@ -1400,12 +1406,8 @@ def _if_clause_candidates(
         )
     ]
     current = node
-    while (
-            len(current.orelse) == 1
-            and isinstance(current.orelse[0], ast.If)
-            and _is_elif(current.orelse[0], parents, lines)
-    ):
-        current = current.orelse[0]
+    while (next_elif := _next_elif(current, parents, lines)) is not None:
+        current = next_elif
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_IF_ELIF,

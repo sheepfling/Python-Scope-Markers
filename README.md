@@ -308,7 +308,7 @@ not another compound statement. `####` is the default marker style—visually tw
 `##` pairs. If the source already uses standalone `##` markers, Scope Markers
 preserves that style instead.
 
-To reverse, or unscope, a file, use `--strip`. It removes exact standalone `##`
+To reverse, or remove scope markers from, a file, use `--strip`. It removes exact standalone `##`
 and `####` marker comments only; comments containing marker-like text and
 ordinary source lines remain unchanged. Like normal formatting, it supports
 check mode, `--diff`, and `--fix`. `--strip` intentionally cannot be combined
@@ -415,15 +415,15 @@ Exit statuses are stable:
 ## Composing with formatters and linters
 
 Scope markers must be the last tool that rewrites Python layout. They are
-ordinary comments to Ruff, Black, YAPF, autopep8, and editor formatters; those
-tools do not know that `####` represents a scope boundary.
+ordinary comments to Ruff, Black, YAPF, other Python formatters, and editor
+formatters; those tools do not know that `####` represents a scope boundary.
 
 ### Recommended sequence
 
 Use this order whenever more than one tool processes the same files:
 
 ```text
-1. Import sorting and autofixes
+1. Import sorting and automatic fixes
 2. Ruff check --fix or another linter's autofixes
 3. Ruff format, Black, or another code formatter
 4. scope-markers --fix
@@ -432,7 +432,7 @@ Use this order whenever more than one tool processes the same files:
 
 ### Formatter conflicts
 
-Ruff format, Black, YAPF, autopep8, and editor formatters may move code,
+Ruff format, Black, YAPF, other Python formatters, and editor formatters may move code,
 normalize blank lines around markers, or rewrite multiline strings without
 regenerating the affected markers. Running one after Scope Markers can therefore
 make a previously clean file appear changed again.

@@ -45,13 +45,13 @@ class BoundaryKind(StrEnum):
 ####
 
 
-ALL_BOUNDARY_KINDS: Final = frozenset(BoundaryKind)
-STATEMENT_BOUNDARY_KINDS: Final = frozenset(
+ALL_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(BoundaryKind)
+STATEMENT_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("statement.")
 )
-CLASSIC_BOUNDARY_KINDS: Final = STATEMENT_BOUNDARY_KINDS | {
-    BoundaryKind.CLAUSE_MATCH_CASE
-}
+CLASSIC_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+    (*STATEMENT_BOUNDARY_KINDS, BoundaryKind.CLAUSE_MATCH_CASE)
+)
 
 SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
     {
@@ -204,7 +204,7 @@ class MarkerPolicy:
             facts: frozenset[str],
             inline_suite: bool,
     ) -> bool:
-        """Return whether one fully analysed candidate should be rendered."""
+        """Return whether one fully analyzed candidate should be rendered."""
         return self.decision(
             kind,
             span_lines=span_lines,
@@ -229,7 +229,7 @@ class MarkerPolicy:
             facts: frozenset[str],
             inline_suite: bool,
     ) -> PolicyDecision:
-        """Explain whether one fully analysed candidate should be rendered."""
+        """Explain whether one fully analyzed candidate should be rendered."""
         if kind not in self.selected:
             return PolicyDecision(False, "selector is not enabled")
         ####
@@ -335,7 +335,9 @@ def expand_selectors(selectors: tuple[str, ...]) -> frozenset[BoundaryKind]:
             pass
         ####
         prefix = f"{name}."
-        prefixed = {kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith(prefix)}
+        prefixed: set[BoundaryKind] = {
+            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith(prefix)
+        }
         if prefixed:
             expanded.update(prefixed)
             continue
@@ -594,7 +596,7 @@ def _has_scope_markers_table(path: Path) -> bool:
 
 def describe_policy(policy: MarkerPolicy) -> str:
     """Render a stable, human-readable policy summary."""
-    selectors = ", ".join(sorted(kind.value for kind in policy.selected)) or "(none)"
+    selectors = ", ".join(sorted([kind.value for kind in policy.selected])) or "(none)"
     max_depth = "unlimited" if policy.max_depth is None else str(policy.max_depth)
     return "\n".join(
         (

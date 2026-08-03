@@ -13,7 +13,15 @@ def main() -> int:
     """Verify wheel packaging without reusing stale distribution artifacts."""
     with TemporaryDirectory(prefix="scope-markers-wheel-") as output:
         return subprocess.run(
-            [sys.executable, "-m", "build", "--wheel", "--outdir", output],
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "--wheel",
+                # noinspection SpellCheckingInspection
+                "--outdir",
+                output,
+            ],
             cwd=ROOT,
             check=False,
         ).returncode
