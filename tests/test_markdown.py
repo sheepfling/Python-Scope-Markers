@@ -161,13 +161,18 @@ def test_format_markdown_source_skips_nested_text_fence_and_processes_later_pyth
 ####
 
 
-def test_format_markdown_source_skips_content_after_unterminated_text_fence() -> None:
+@pytest.mark.parametrize(
+    ("outer_fence", "inner_fence"), (("~~~", "```"), ("```", "~~~"))
+)
+def test_format_markdown_source_skips_content_after_unterminated_text_fence(
+        outer_fence: str, inner_fence: str
+) -> None:
     source = (
-        "~~~text\n"
-        "```python\n"
+        f"{outer_fence}text\n"
+        f"{inner_fence}python\n"
         "def literal():\n"
         "    pass\n"
-        "```\n"
+        f"{inner_fence}\n"
     )
 
     assert api.format_markdown_source(source) == source
