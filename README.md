@@ -138,6 +138,29 @@ use `logic` when definitions should remain untouched but control-flow scopes sho
 closed. Use `all` when you also want markers after intermediate branches and every `match`
 case.
 
+For the same source, the tiers differ like this:
+
+```text
+definitions: closes functions, methods, and classes
+logic:       closes if/else, loops, try blocks, match, and the final case
+statements:  definitions + logic (recommended)
+all:         statements + every intermediate clause and match case
+```
+
+Example source:
+
+````text
+def load(value):
+    if value:
+        return value
+    else:
+        return None
+````
+
+`definitions` adds one marker after the function. `logic` adds one marker after the
+`if`/`else` chain. `statements` adds both. `all` also adds a marker after each selected
+branch when there are intermediate clauses.
+
 ```bash
 scope-markers --preset definitions --fix src
 scope-markers --preset logic --fix src
