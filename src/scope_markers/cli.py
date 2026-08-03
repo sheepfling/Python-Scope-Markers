@@ -390,24 +390,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path in files:
         processed_files += 1
         try:
-            marker_policy = resolved_policy(path)
-            if include_markdown and path.suffix.casefold() in MARKDOWN_SUFFIXES:
-                inspection = inspect_markdown_file(
-                    path,
-                    mark_stubs=mark_stubs,
-                    indent_width=indent_width,
-                    strip=strip,
-                    policy=marker_policy,
-                )
-            elif strip:
+            if strip:
                 inspection = inspect_stripped_file(path)
             else:
-                inspection = inspect_file(
-                    path,
-                    mark_stubs=mark_stubs,
-                    indent_width=indent_width,
-                    policy=marker_policy,
-                )
+                marker_policy = resolved_policy(path)
+                if include_markdown and path.suffix.casefold() in MARKDOWN_SUFFIXES:
+                    inspection = inspect_markdown_file(
+                        path,
+                        mark_stubs=mark_stubs,
+                        indent_width=indent_width,
+                        strip=strip,
+                        policy=marker_policy,
+                    )
+                else:
+                    inspection = inspect_file(
+                        path,
+                        mark_stubs=mark_stubs,
+                        indent_width=indent_width,
+                        policy=marker_policy,
+                    )
+                ####
             ####
             if not inspection.changed:
                 if verbose:

@@ -87,6 +87,24 @@ def test_format_markdown_source_preserves_indented_fence_prefix() -> None:
 ####
 
 
+def test_format_markdown_source_removes_partial_fence_indentation() -> None:
+    source = (
+        "  ```python\n"
+        " if ready:\n"
+        "   pass\n"
+        "  ```\n"
+    )
+
+    assert api.format_markdown_source(source) == (
+        "  ```python\n"
+        "  if ready:\n"
+        "   pass\n"
+        "  ####\n"
+        "  ```\n"
+    )
+####
+
+
 @pytest.mark.parametrize(
     ("opening", "content", "closing"),
     (

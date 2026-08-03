@@ -74,7 +74,7 @@ def _remove_fence_indentation(lines: Sequence[str], indentation: str) -> tuple[s
         return tuple(lines)
     ####
     return tuple(
-        line[len(indentation):] if line.startswith(indentation) else line
+        line[min(len(indentation), len(line) - len(line.lstrip(" "))):]
         for line in lines
     )
 ####

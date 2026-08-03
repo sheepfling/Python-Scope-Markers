@@ -2505,6 +2505,18 @@ def test_cli_strip_accepts_invalid_python_and_stub_files(
 ####
 
 
+def test_cli_strip_ignores_invalid_policy_configuration(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.py"
+    path.write_text("not valid Python: ####\n####\n", encoding="utf-8")
+    (tmp_path / "scope-markers.toml").write_text(
+        'select = ["statement.not-a-selector"]\n', encoding="utf-8"
+    )
+
+    assert cli.main(["--strip", "--fix", "--quiet", str(path)]) == 0
+    assert path.read_text(encoding="utf-8") == "not valid Python: ####\n"
+####
+
+
 def test_cli_strip_diff_rejects_changed_bare_cr_files(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
