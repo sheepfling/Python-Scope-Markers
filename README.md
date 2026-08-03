@@ -6,50 +6,52 @@
 
 **Explicit visual endings for Python's indented compound statements.**
 
-Scope Markers is an opinionated, standard-library-only Python formatter. It
-inserts standalone `####` comments where complete compound statements end,
-making long or deeply nested code easier to scan.
+Scope Markers is an opinionated, standard-library-only Python formatter that inserts
+standalone `####` comments at selected compound-statement and clause boundaries.
 
-The formatter is deterministic, idempotent, reversible with `--strip`, and
-guarded by an AST-equivalence check. Its markers are ordinary Python comments
-and have no runtime effect.
+It can apply one consistent convention everywhere, or use a fine-grained policy based on
+AST structure, body size, nesting depth, file patterns, and statement-specific predicates.
+It can also format Python code inside Markdown fences.
 
-This is a project convention, not a claim about universal Python style. Use it
-where visible closing boundaries make the code easier for your team to read.
+Scope Markers is deterministic, idempotent, reversible with `--strip`, and guarded by an
+AST-equivalence check. Its markers are ordinary Python comments and have no runtime effect.
+
+## What it does
+
+- marks complete functions, classes, conditionals, loops, context managers, exception
+  handlers, and pattern matches;
+- optionally marks individual `if`, loop, `try`, and `match case` suites;
+- supports density presets from definitions-only through every available clause;
+- filters markers by inline layout, line span, statement count, clause count, and depth;
+- supports strict project configuration, per-selector rules, and ordered per-file overrides;
+- formats standalone `python`, `py`, and `python3` Markdown fences with `--markdown`;
+- supports file and next-boundary opt-out directives;
+- checks, diffs, fixes, or strips markers without runtime dependencies.
 
 ## Example
 
-Before:
-
-```python
-def absolute(value: int) -> int:
-    if value < 0:
-        return -value
-    ####
-    return value
-####
+```diff
+ def absolute(value: int) -> int:
+     if value < 0:
+         return -value
++    ####
+     return value
++####
 ```
 
-After `scope-markers --fix`:
+A marker's indentation identifies the statement it closes. Unlike `# end if` or
+`# end function`, `####` copies no name or clause label that can become stale. Scope
+Markers removes recognized managed markers and regenerates their canonical placement from
+parsed source.
 
-```python
-def absolute(value: int) -> int:
-    if value < 0:
-        return -value
-    ####
-    return value
-####
-```
-
-A marker's indentation identifies the statement it closes. Unlike labels such
-as `# end if` or `# end function`, `####` copies no identifier or clause name
-that can become stale; Scope Markers regenerates placement from parsed source.
+This is a project convention, not a claim about universal Python style. Use it where
+visible closing boundaries make code easier for your team to scan.
 
 ## Installation
 
 Scope Markers requires Python 3.11 or newer.
 
-Install the command from the repository with `uv`:
+Install directly from the repository with `uv`:
 
 ```bash
 uv tool install git+https://github.com/sheepfling/Python-Scope-Markers.git
@@ -69,8 +71,9 @@ uvx --from git+https://github.com/sheepfling/Python-Scope-Markers.git \
 ```
 
 From a cloned checkout, use `uv tool install .`, `pipx install .`, or
-`python -m pip install -e .` in a virtual environment. The installed command
-and module entry point are equivalent:
+`python -m pip install -e .` inside a virtual environment.
+
+The installed command and module entry point are equivalent:
 
 ```bash
 scope-markers --help
@@ -79,104 +82,173 @@ python -m scope_markers --help
 
 ## Quick start
 
-Check files without changing them, then apply or inspect the proposed markers:
+Check files without modifying them:
 
 ```bash
-scope-markers .          # Check; do not modify files.
-scope-markers --diff .   # Print the proposed patch.
-scope-markers --fix .    # Canonicalize markers in place.
+scope-markers .
 ```
 
-For example, this source:
+Inspect or apply the proposed changes:
 
-```python
-class Worker:
-    def run(self, ready: bool) -> None:
-        if ready:
-            work()
-        ####
-    ####
-####
+```bash
+scope-markers --diff .
+scope-markers --fix .
 ```
 
-becomes:
+Remove managed markers:
 
-```python
-class Worker:
-    def run(self, ready: bool) -> None:
-        if ready:
-            work()
-        ####
-    ####
-####
+```bash
+scope-markers --strip --diff .
+scope-markers --strip --fix .
 ```
 
-## Focused responsibility
+Format eligible Python fences in Markdown:
 
-Scope Markers owns one convention: canonical standalone markers at Python
-compound-statement boundaries. It is not a general formatter, linter, type
-checker, Markdown checker, or plugin framework.
-
-| Concern                                              | Responsible tool                        |
-|------------------------------------------------------|-----------------------------------------|
-| Normal Python layout, wrapping, spacing, and quoting | Ruff format or Black                    |
-| Canonical standalone scope markers                   | Scope Markers                           |
-| Optional logical block indentation                   | Scope Markers `--indent-width`          |
-| Python diagnostics and type checking                 | Ruff, Flake8, Pyright, or similar tools |
-| Markdown style in this repository                    | rumdl                                   |
-
-## Python API
-
-```python
-from scope_markers.api import format_source
-
-formatted = format_source(source, filename="BUILD.bzl")
+```bash
+scope-markers --markdown --diff README.md docs
+scope-markers --markdown --fix README.md docs
 ```
 
-The API returns formatted text without modifying files. File-oriented API
-functions are also available for callers that need inspection or atomic writes:
-`inspect_file`, `process_file`, `strip_markers`, `strip_file`, and
-`discover_python_files`.
+The default invocation is check mode. It reports files that need changes, returns status
+`1`, and leaves the files untouched.
 
-Markdown fences are opt-in and use the same formatter inside each standalone
-`python`, `py`, or `python3` fenced block:
+## Choose a marker density
 
-```python
-from scope_markers.api import format_markdown_source
+The built-in presets cover the common policies:
 
-formatted = format_markdown_source(markdown_text)
+| Preset | Boundaries selected |
+|---|---|
+| `none` | No generated markers |
+| `definitions` | Complete functions and classes |
+| `statements` | Every complete compound statement, without internal clauses |
+| `classic` | Complete compound statements plus every `match case` |
+| `all` | Every supported statement and clause boundary |
+
+`classic` is the default and preserves the original Scope Markers convention.
+
+```bash
+scope-markers --preset definitions --fix src
+scope-markers --preset statements --fix src
+scope-markers --preset classic --ignore clause.match.case --fix src
 ```
 
 ## Marker policy
 
-The default `classic` policy preserves the standard output: markers after every
-complete compound statement and after every `match` `case`. A policy selects
-eligible boundaries first, then applies objective shape filters. This avoids a
-separate switch for every statement form.
+A policy has three independent layers:
 
-Available presets are `none`, `definitions`, `statements`, `classic`, and
-`all`. The current exact selectors are:
+1. **Selection** chooses which kinds of boundaries are eligible.
+2. **Shape filters** decide how substantial a candidate must be.
+3. **Overrides** specialize a selector or a set of matching files.
 
-```text
-statement.function  statement.class  statement.if    statement.for
-statement.while     statement.with   statement.try   statement.match
-clause.if.body      clause.if.elif    clause.if.else
-clause.for.body     clause.for.else   clause.while.body  clause.while.else
-clause.try.body     clause.try.except clause.try.else    clause.try.finally
-clause.match.case
+This avoids a separate boolean option for every Python statement form.
+
+### Boundary selectors
+
+`statement.*` selectors close a complete compound statement:
+
+| Selector | Boundary |
+|---|---|
+| `statement.function` | Complete `def` or `async def` |
+| `statement.class` | Complete `class` |
+| `statement.if` | Complete `if` / `elif` / `else` chain |
+| `statement.for` | Complete `for` or `async for`, including `else` |
+| `statement.while` | Complete `while`, including `else` |
+| `statement.with` | Complete `with` or `async with` |
+| `statement.try` | Complete `try`, handlers, `else`, and `finally` |
+| `statement.match` | Complete `match` |
+
+`clause.*` selectors close one suite within a compound statement:
+
+| Selector | Boundary |
+|---|---|
+| `clause.if.body` | Initial `if` suite |
+| `clause.if.elif` | Each `elif` suite |
+| `clause.if.else` | Final `else` suite |
+| `clause.for.body` | Primary `for` or `async for` suite |
+| `clause.for.else` | Loop `else` suite |
+| `clause.while.body` | Primary `while` suite |
+| `clause.while.else` | Loop `else` suite |
+| `clause.try.body` | Initial `try` suite |
+| `clause.try.except` | Each `except` or `except*` suite |
+| `clause.try.else` | `try`-`else` suite |
+| `clause.try.finally` | `finally` suite |
+| `clause.match.case` | Each `case` suite |
+
+Selectors may be exact names, groups, or namespace prefixes. The groups are
+`definitions`, `statements`, `clauses`, `conditionals`, `loops`, `contexts`,
+`exceptions`, and `patterns`.
+
+For example, `clause.if` expands to every `clause.if.*` selector:
+
+```bash
+scope-markers --select clause.if --diff src
 ```
 
-Use `--list-selectors` to print the current presets, groups, and selectors.
-Groups include `definitions`, `statements`, `clauses`, `conditionals`, `loops`,
-`contexts`, `exceptions`, and `patterns`.
+Use `--list-selectors` to print the selectors, groups, and presets supported by the
+installed version.
 
-Configure a project in `pyproject.toml`:
+### Selection arithmetic
+
+Selection is resolved in this order:
+
+1. `preset` establishes the base policy.
+2. `select` replaces the preset selection when present.
+3. `extend-select` adds selectors.
+4. `ignore` subtracts selectors.
+
+For example:
+
+```toml
+[tool.scope-markers]
+preset = "statements"
+ignore = ["statement.if"]
+extend-select = ["clause.if.else"]
+```
+
+This marks complete compound statements except complete `if` chains, while still marking
+the final `else` suite when one exists.
+
+Unknown settings, selectors, predicates, and values are errors rather than silent no-ops.
+
+### Shape filters
+
+Shape filters are objective and independent:
+
+| Setting | Meaning |
+|---|---|
+| `skip-inline-suites` | Skip suites whose body begins on the header line |
+| `min-span-lines` | Minimum physical span from candidate header through its end |
+| `min-body-lines` | Minimum physical-line span of an owned suite |
+| `min-body-statements` | Minimum direct AST statements in an owned suite |
+| `min-clauses` | Minimum number of suites owned by the candidate |
+| `min-depth` | Minimum compound-statement nesting depth |
+| `max-depth` | Maximum compound-statement nesting depth |
+| `stub-policy` | `skip` or `mark` docstring-only and ellipsis-only functions |
+
+These filters answer different questions. A multiline call can occupy several physical
+lines while remaining one direct statement:
+
+```python
+if ready:
+    run(
+        first,
+        second,
+    )
+####
+```
+
+`min-body-lines = 2` may keep that boundary. `min-body-statements = 2` skips it.
+
+### Project configuration
+
+Configure Scope Markers in `pyproject.toml`:
 
 ```toml
 [tool.scope-markers]
 preset = "statements"
 skip-inline-suites = true
 min-body-lines = 2
+stub-policy = "skip"
 
 [tool.scope-markers.rules."statement.function"]
 min-body-lines = 1
@@ -193,15 +265,13 @@ patterns = ["tests/unit/**"]
 min-body-lines = 1
 ```
 
-The complete accepted configuration shape is shown below. The settings are
-strict: unknown keys, selectors, predicates, and values are errors rather than
-being silently ignored.
+The complete accepted configuration shape is:
 
 ```toml
 [tool.scope-markers]
-preset = "classic"                 # none, definitions, statements, classic, all
+preset = "classic"                  # none, definitions, statements, classic, all
 # select = ["definitions"]          # replace the preset selection
-extend-select = ["clause.if"]       # add exact selectors, groups, or prefixes
+extend-select = ["clause.if"]       # add selectors, groups, or prefixes
 ignore = ["clause.match.case"]      # subtract selectors
 skip-inline-suites = true
 min-span-lines = 2
@@ -211,17 +281,38 @@ min-clauses = 1
 min-depth = 0
 max-depth = 4
 stub-policy = "skip"                # skip or mark
+```
 
-[tool.scope-markers.rules."statement.function"]
-min-body-lines = 1                   # override the global value for functions
-require = ["nested"]                 # predicates valid for this selector
+A selector-specific rule inherits every global value it does not override:
 
+```toml
 [tool.scope-markers.rules."statement.if"]
+min-body-lines = 1
 require = ["has-else"]
+```
 
-[tool.scope-markers.rules."statement.match"]
-require = ["multiple-cases"]
+Supported predicates include:
 
+| Applies to | Predicates |
+|---|---|
+| General candidates | `nested`, `module-level`, `class-level`, `function-level`, `stub` |
+| `statement.if` | `has-elif`, `has-else` |
+| `statement.try` | `multiple-handlers`, `has-finally` |
+| `statement.match` | `multiple-cases` |
+
+`require` is valid only inside a selector rule.
+
+### Per-file policy
+
+Each `[[tool.scope-markers.per-file]]` table requires one or more `patterns` and may
+contain the global filters, `preset`, `select`, `extend-select`, `ignore`, and selector
+rules.
+
+Patterns are matched relative to the configuration file and also against the basename and
+absolute path. Matching tables are applied in declaration order. Later scalar settings
+replace earlier values; `extend-select` and `ignore` remain additive and subtractive.
+
+```toml
 [[tool.scope-markers.per-file]]
 patterns = ["generated/**", "vendor/**"]
 preset = "none"
@@ -232,92 +323,62 @@ extend-select = ["clause.match.case"]
 ignore = ["statement.if"]
 ```
 
-`select`, `extend-select`, and `ignore` accept exact selectors, selector
-groups, and namespace prefixes. `require` is available only inside a rule
-table. Global and per-rule filters are `skip-inline-suites`,
-`min-span-lines`, `min-body-lines`, `min-body-statements`, `min-clauses`,
-`min-depth`, `max-depth`, and `stub-policy`. A per-file table accepts those
-same settings plus `patterns`, `preset`, `select`, `extend-select`, `ignore`,
-and `rules`.
+A policy exclusion still reads the file. Use `--exclude` when the path should not be
+discovered or processed at all.
 
-The supported global filters are `skip-inline-suites`, `min-span-lines`,
-`min-body-lines`, `min-body-statements`, `min-clauses`, `min-depth`,
-`max-depth`, and `stub-policy` (`skip` or `mark`). A rule table inherits global
-values for settings it does not specify. Initial rule predicates are
-`nested`, `module-level`, `class-level`, `function-level`, and `stub`, plus
-`has-elif`/`has-else` for `statement.if`, `multiple-handlers`/`has-finally` for
-`statement.try`, and `multiple-cases` for `statement.match`.
+### Configuration discovery and inspection
 
-Each `[[tool.scope-markers.per-file]]` table requires one or more `patterns`.
-Patterns are matched relative to the configuration file (and also against the
-basename and absolute path). Matching tables are applied in declaration order;
-later settings replace earlier settings, while `extend-select` and `ignore`
-remain additive and subtractive respectively.
+For each processed file, the CLI finds the nearest `scope-markers.toml`,
+`.scope-markers.toml`, or `pyproject.toml` containing `[tool.scope-markers]`.
 
-The CLI finds the nearest `scope-markers.toml`, `.scope-markers.toml`, or
-`pyproject.toml` containing `[tool.scope-markers]` for each processed file.
-Use `--config PATH` to force one file, `--isolated` to ignore discovered
-configuration, or `--show-settings PATH` to inspect the resolved policy.
-Use `--explain PATH` to see every Python-source candidate and why it will be
-marked or skipped. Command-line policy options override configuration:
+Use:
 
 ```bash
-scope-markers --preset definitions src
-scope-markers --select statement.match src
-scope-markers --preset classic --ignore clause.match.case src
-scope-markers --select statement.if --min-body-lines 2 src
-scope-markers --select clause.if src
-scope-markers --select clause.if.else src
+scope-markers --config path/to/pyproject.toml src
+scope-markers --isolated src
+scope-markers --show-settings src/example.py
 scope-markers --explain src/example.py
 ```
 
-`statement.*` selectors close a complete compound statement. `clause.*`
-selectors close an individual suite. For example, `--preset statements` emits
-only outer boundaries, while `--select clause.if` marks each `if`, `elif`, and
-`else` suite. Selecting only `clause.if.else` marks the final `else` suite and
-does nothing for `if` chains without an `else`.
+- `--config PATH` forces one configuration file.
+- `--isolated` ignores discovered configuration.
+- `--show-settings PATH` prints the resolved policy for one path.
+- `--explain PATH` reports every candidate and why it is marked or skipped.
 
-`--strip` removes every managed marker and therefore cannot be combined with
-policy-selection or shape-filter options.
+Command-line policy settings override configuration.
 
 ### Common policy recipes
 
-Use a preset when the whole project wants one simple convention:
+Definitions only:
 
 ```toml
-# Functions and classes only.
 [tool.scope-markers]
 preset = "definitions"
 ```
 
+Complete statements without branch or case markers:
+
 ```toml
-# Complete outer statements, without branch or case markers.
 [tool.scope-markers]
 preset = "statements"
 ```
 
-```toml
-# Every supported boundary, including every clause and match case.
-[tool.scope-markers]
-preset = "all"
-```
-
-Use selectors when the policy is narrower:
+Classic behavior without individual `case` markers:
 
 ```toml
-# Only the final else suite of an if chain.
-[tool.scope-markers]
-select = ["clause.if.else"]
-```
-
-```toml
-# Keep the classic policy but remove case markers.
 [tool.scope-markers]
 preset = "classic"
 ignore = ["clause.match.case"]
 ```
 
-Shape filters answer questions such as “how large must this scope be?”:
+Only final `else` suites:
+
+```toml
+[tool.scope-markers]
+select = ["clause.if.else"]
+```
+
+Only substantial `if` chains with a final `else`:
 
 ```toml
 [tool.scope-markers]
@@ -325,17 +386,80 @@ select = ["statement.if"]
 skip-inline-suites = true
 min-body-lines = 2
 min-body-statements = 2
+
+[tool.scope-markers.rules."statement.if"]
+require = ["has-else"]
 ```
 
-The filters are independent: a multiline call is still one direct statement,
-while `min-body-statements = 2` requires two direct statements in an owned
-suite. Use `--show-settings PATH` and `--explain PATH` to inspect the resolved
-policy and each candidate decision.
+## Markdown code fences
 
-### Protecting files, scopes, and snippets
+Markdown support is opt-in. Scope Markers does not reflow or lint Markdown; it formats
+Python source inside eligible fenced blocks.
 
-To leave one file untouched by normal marker formatting, put this standalone
-comment on its first non-empty line:
+```bash
+scope-markers --markdown README.md docs
+scope-markers --markdown --diff README.md docs
+scope-markers --markdown --fix README.md docs
+scope-markers --markdown --strip --fix README.md docs
+```
+
+Only standalone fences labeled `python`, `py`, or `python3` are processed. Other Markdown
+content and non-Python fences remain unchanged. Each eligible fence must be valid as a
+standalone Python source fragment; one fence cannot continue a class or function from
+another fence.
+
+For example, this Markdown:
+
+````text
+```python
+def load(path: str) -> str:
+    with open(path, encoding="utf-8") as stream:
+        return stream.read()
+```
+````
+
+becomes:
+
+````markdown
+```python
+def load(path: str) -> str:
+    with open(path, encoding="utf-8") as stream:
+        return stream.read()
+    ####
+####
+```
+````
+
+Unterminated outer fences are preserved rather than partially rewritten.
+
+### Literal and instructional examples
+
+An eligible Python fence that intentionally demonstrates unformatted source needs an
+opt-out directive as its first non-empty line:
+
+````markdown
+```python
+# scope-markers: off
+if ready:
+    run()
+```
+````
+
+The equivalent `# no-scope-markers` and `# scope-markers=ignore` comments are also
+accepted in Markdown fences. Keep the directive inside the code block rather than in the
+fence info string.
+
+For documentation that should not display a directive, use a `text` or `diff` fence, or
+place the nested example inside a longer outer fence. This keeps the README itself stable
+when checked with `scope-markers --markdown`.
+
+An opted-out Markdown fence remains untouched, including during `--strip`.
+
+## Source directives
+
+### Disable one Python file
+
+Place this comment on the first non-empty line:
 
 ```python
 # scope-markers: off
@@ -344,8 +468,12 @@ def generated_module_entry() -> None:
     pass
 ```
 
-To suppress only the next selected boundary, use `ignore-next` immediately
-before the scope. Nested scopes remain eligible:
+Normal marker formatting leaves the file untouched.
+
+### Ignore the next boundary
+
+Place `ignore-next` immediately before the selected scope. Decorators may follow the
+directive. Nested candidates remain eligible:
 
 ```python
 # scope-markers: ignore-next
@@ -356,282 +484,165 @@ class GeneratedContainer:
     ####
 ```
 
-This suppresses the class boundary but still allows a marker after
-`useful_helper`. The directive is not name-based; for a particular function or
-class, place it before that definition. There is currently no range-based
-`off`/`on` directive, so use a per-file policy for a broad generated or vendor
-tree:
+This suppresses the class boundary but retains the function boundary.
 
-```toml
-[[tool.scope-markers.per-file]]
-patterns = ["src/generated/**", "vendor/**"]
-preset = "none"
-```
+There is currently no range-based `off` / `on` directive. Use a per-file policy for a
+generated or vendor tree.
 
-That policy exclusion differs from discovery exclusion. Use `--exclude` when
-the files should not be read at all:
+## Discovery and file types
 
-```bash
-scope-markers --exclude "src/generated/**" --exclude vendor src
-```
+With no paths, the current directory is scanned recursively. Multiple files and
+directories may be supplied.
 
-For Markdown, opt out a Python fence with a first non-empty Python comment;
-keep directives out of the fence info string:
+Recursive discovery prunes common VCS, environment, cache, dependency, and build trees,
+including `.git`, `.venv`, `.uv-cache`, `.cache`, `.pytest_cache`, `.ruff_cache`, `build`,
+`dist`, `*.egg-info`, and `node_modules`.
 
-````markdown
-```python
-# scope-markers: off
-def literal_example():
-    pass
-```
-````
-
-The equivalent `# no-scope-markers` and `# scope-markers=ignore` comments are
-accepted in Markdown fences. Non-Python fences and unterminated outer fences
-are preserved. `--strip` is an explicit removal operation and removes managed
-markers from ordinary Python files; an opted-out Markdown fence remains
-untouched.
-
-## Discovery and common options
-
-With no paths, the current directory is scanned recursively. Common VCS,
-virtual-environment, cache, dependency, and build directories are pruned.
-Supplying multiple files or directories is supported. A supplied root that is
-itself, or is inside, a generated directory such as `build`, `.venv`, or
-`node_modules` is skipped. Explicitly naming a `.py` file bypasses directory
-pruning and custom excludes. Use `--mark-stubs` to include `.pyi` files.
-
-The default directory exclusions include common VCS, virtual-environment,
-cache, build, and dependency directories such as `.git`, `.venv`, `.uv-cache`,
-`.cache`, `build`, `dist`, `*.egg-info`, and `node_modules`. Use
-`--no-default-excludes` when you intentionally need to scan those directories;
-explicit `--exclude` patterns still apply.
-
-The default invocation is check mode: it reports files needing markers and
-returns exit status `1` without changing them. These options cover the common
-workflow:
-
-```bash
-scope-markers --strip --fix src tests   # remove standalone scope markers
-scope-markers --markdown --fix README.md # format Python Markdown fences
-scope-markers --mark-stubs --fix src     # include .pyi files
-scope-markers --indent-width 2 --fix src # normalize block indentation
-scope-markers --verbose src tests        # report every file's status
-scope-markers --quiet --fix src tests    # suppress status output
-scope-markers --fail-fast .              # stop at the first problem
-scope-markers --version                  # show the installed version
-```
-
-`--quiet` and `--verbose` are mutually exclusive. In `--diff` mode, standard
-output is reserved for patch bytes; status and diagnostic messages go to
-standard error. This keeps both changed and already-clean runs safe to redirect
-to a patch file. `--diff --verbose` additionally reports each file's status on
-standard error.
-
-Every command also works as `python -m scope_markers` when the console script
-is not on `PATH`.
-
-`--indent-width WIDTH` normalizes logical Python block indentation to that many
-spaces before scope markers are regenerated. It converts block-indentation tabs
-to spaces and adjusts block comments, but deliberately preserves multiline
-continuation alignment and blank-line whitespace. It is not a replacement for
-a full code formatter; when using one, run it before scope markers.
-
-For example, this changes block indentation while preserving the continuation
-alignment inside the parenthesized expression:
-
-```bash
-scope-markers --indent-width 2 --fix src
-```
-
-```python
-# Before
-if ready:
-    values = (
-        first
-        + second
-    )
-####
-
-# After --indent-width 2
-if ready:
-  values = (
-        first
-        + second
-    )
-####
-```
-
-There is one marker here because the parenthesized assignment is a continuation,
-not another compound statement. `####` is the default marker style—visually two
-`##` pairs. If the source already uses standalone `##` markers, Scope Markers
-preserves that style instead.
-
-To reverse, or remove scope markers from, a file, use `--strip`. It removes exact standalone `##`
-and `####` marker comments only; comments containing marker-like text and
-ordinary source lines remain unchanged. Like normal formatting, it supports
-check mode, `--diff`, and `--fix`. `--strip` intentionally cannot be combined
-with `--indent-width`, because stripping does not reformat code:
-
-```bash
-scope-markers --strip src tests          # report files containing markers
-scope-markers --strip --diff src tests   # show removals as a patch
-scope-markers --strip --fix src tests    # remove markers in place
-```
-
-For example, `--strip --fix` changes only recognized standalone marker lines:
-
-```python
-# Before
-def run() -> None:
-    work()
-####
-
-# After
-def run() -> None:
-    work()
-####
-```
-
-Marker-like text inside strings or ordinary comments is preserved.
-
-Diff output preserves LF and CRLF records and includes explicit markers for a
-missing final newline. `--diff` rejects changed files with bare-CR line endings
-because unified-diff tools cannot apply those physical boundaries. Use `--fix`
-or convert such files to LF or CRLF first.
-
-Patch labels are normalized relative to the enclosing Git worktree, or to a
-safe shared root outside Git. Unusual names—such as spaces, tabs, newlines,
-quotes, and non-UTF-8 path bytes—are quoted separately from the source-file
-encoding so Git can consume the patch.
-
-The default check scans every discovered file so CI can report all required
-changes. Use `--fail-fast` for a quick local check that stops after the first
-changed file or processing error.
-
-Add repeatable glob exclusions for project-specific generated or vendor trees:
+Use `--no-default-excludes` to scan those paths intentionally. Repeat `--exclude` for
+project-specific generated or vendor trees:
 
 ```bash
 scope-markers --exclude generated --exclude "*.generated.py" src tests
 ```
 
-Repeat `--exclude` for an additive OR list: a recursively discovered path is
-skipped when it matches any supplied pattern. Each pattern is checked against
-the basename, the path relative to its scan root, and the normalized full path.
+An exclusion may match a basename, the path relative to its scan root, or the normalized
+full path. Exclusions apply to recursively discovered files and directories. An explicitly
+named supported source file remains an explicit input.
 
-They apply to recursively discovered files and directories; explicit `.py` paths
-remain explicit inputs.
-
-Python-compatible files with another extension can be opted in with repeatable
-include patterns. This is useful for formats such as Starlark, whose files
-often use `.bzl`:
+Use `--mark-stubs` to include recursively discovered `.pyi` files and mark docstring-only
+or ellipsis-only definitions:
 
 ```bash
-scope-markers --include "*.bzl" --fix .
+scope-markers --mark-stubs --fix src
 ```
 
-For example, scan Starlark files while leaving a generated vendor tree out:
+Opt in Python-compatible files with another extension by repeating `--include`:
 
 ```bash
 scope-markers --include "*.bzl" --exclude vendor --fix .
 ```
 
-Included files still need to be parseable by Python's AST, and exclusions and
-generated-directory pruning take precedence.
+Included files must parse as Python syntax under the running interpreter. Exclusions and
+generated-directory pruning take precedence during recursive discovery.
 
-To process Markdown files from the CLI, add `--markdown`:
+Recursive discovery skips symlinked files and directories. Explicit file symlinks are
+processed without replacing the link itself.
 
-```bash
-scope-markers --markdown README.md docs --fix
-scope-markers --markdown --strip --fix README.md docs
+## Command-line reference
+
+### Operation modes
+
+| Option | Behavior |
+|---|---|
+| `--fix` | Apply the requested changes atomically |
+| `--diff` | Print a unified diff without modifying files |
+| `--strip` | Remove recognized managed markers instead of regenerating them |
+| `--markdown` | Include eligible Python fences in Markdown processing |
+
+`--fix` and `--diff` are mutually exclusive. `--strip` cannot be combined with policy
+selection, shape filters, or `--indent-width`; stripping removes every recognized managed
+marker in the selected source.
+
+### Policy and configuration
+
+| Option | Behavior |
+|---|---|
+| `--preset NAME` | Set the base marker-density preset |
+| `--select SELECTOR` | Replace the configured selector set |
+| `--extend-select SELECTOR` | Add a selector, group, or prefix |
+| `--ignore SELECTOR` | Remove a selector, group, or prefix |
+| `--list-selectors` | Print selectors, groups, and presets |
+| `--config PATH` | Force one configuration file |
+| `--isolated` | Ignore discovered configuration |
+| `--show-settings PATH` | Print the resolved policy for a path |
+| `--explain PATH` | Explain every candidate decision for a path |
+
+The CLI also exposes the global shape filters:
+
+```text
+--skip-inline-suites
+--min-span-lines N
+--min-body-lines N
+--min-body-statements N
+--min-clauses N
+--min-depth N
+--max-depth N
 ```
 
-Only `python`, `py`, and `python3` fenced blocks are processed. Other Markdown
-content and non-Python fences remain unchanged. To preserve a Python example
-literally, put a scope-markers directive in its first non-empty code line:
+### Discovery and output
 
-````markdown
-# The directive is valid Python and remains visible in the example.
-```python
-# scope-markers: off
-if ready:
-    pass
+| Option | Behavior |
+|---|---|
+| `--mark-stubs` | Include `.pyi`; mark docstring-only and ellipsis-only definitions |
+| `--indent-width WIDTH` | Normalize logical block indentation before marking |
+| `--include PATTERN` | Include another Python-compatible file pattern; repeatable |
+| `--exclude PATTERN` | Exclude recursively discovered paths; repeatable |
+| `--no-default-excludes` | Disable built-in generated-directory pruning |
+| `--fail-fast` | Stop after the first changed file or processing error |
+| `--quiet` | Suppress normal status and summary output |
+| `--verbose` | Report every processed file, including clean files |
+| `--version` | Print the installed version |
+
+`--quiet` and `--verbose` are mutually exclusive.
+
+In `--diff` mode, standard output is reserved for patch bytes. Status and diagnostic
+messages go to standard error, so redirecting the patch is safe.
+
+### Exit statuses
+
+| Status | Meaning |
+|---:|---|
+| `0` | Clean, or all requested fixes completed successfully |
+| `1` | Changes are needed in check or diff mode |
+| `2` | Discovery, configuration, decoding, tokenization, parsing, diff, or I/O failed |
+
+## Indentation normalization
+
+`--indent-width WIDTH` normalizes tokenizer-recognized logical block indentation before
+markers are regenerated. It converts block-indentation tabs to spaces and adjusts attached
+block comments, while preserving multiline continuation alignment and blank-line
+whitespace.
+
+It is not a replacement for a general formatter. Run Ruff format, Black, or another
+ordinary formatter first.
+
+```diff
+ if ready:
+-    values = (
++  values = (
+         first
+         + second
+     )
+ ####
 ```
-````
 
-The equivalent `# no-scope-markers` and `# scope-markers=ignore` comments are
-also accepted. Keep the opt-out as the first non-empty line inside the fence;
-the fence info string should contain only its language and ordinary metadata.
-Each processed Python fence must be valid as a standalone Python source
-fragment; a fence cannot continue a class or function from another fence.
-
-Exit statuses are stable:
-
-- `0`: clean, or successfully fixed;
-- `1`: changes are needed in check or diff mode;
-- `2`: discovery, decoding, tokenization, parsing, or I/O error.
+The parenthesized assignment is a continuation, not another compound statement.
 
 ## Composing with formatters and linters
 
-Scope markers must be the last tool that rewrites Python layout. They are
-ordinary comments to Ruff, Black, YAPF, other Python formatters, and editor
-formatters; those tools do not know that `####` represents a scope boundary.
-
-### Recommended sequence
-
-Use this order whenever more than one tool processes the same files:
+Scope Markers should be the final tool that rewrites Python layout:
 
 ```text
 1. Import sorting and automatic fixes
 2. Ruff check --fix or another linter's automatic fixes
-3. Ruff format, Black, or another code formatter
-4. scope-markers --fix
-5. Read-only checks: Flake8, Pyright, tests, and packaging
+3. Ruff format, Black, YAPF, or another Python formatter
+4. Any formatter that rewrites Python inside Markdown fences
+5. scope-markers --fix, including --markdown where applicable
+6. Read-only linting, type checking, tests, packaging, and Markdown checks
 ```
 
-### Formatter conflicts
+Ruff format, Black, YAPF, and editor formatters treat `####` as an ordinary comment. They
+may move surrounding code or normalize whitespace without restoring the marker policy.
+Run Scope Markers again whenever another tool rewrites marker-managed Python.
 
-Ruff format, Black, YAPF, other Python formatters, and editor formatters may move code,
-normalize blank lines around markers, or rewrite multiline strings without
-regenerating the affected markers. Running one after Scope Markers can therefore
-make a previously clean file appear changed again.
+Flake8 can run after marker insertion, but its spacing rules need to account for the
+standalone comments. This repository uses a 100-character limit and ignores `E203`,
+`E302`, and `E303`.
 
-If a formatter must run after Scope Markers, run `scope-markers --fix` again as
-the final rewriting step. For editor format-on-save, configure the ordinary
-formatter before the marker command or exclude marker-managed files from the
-later formatter.
+### Pre-commit
 
-### Ruff and Black
-
-Run Ruff automatic fixes and ordinary formatting before Scope Markers:
-
-```bash
-python -m ruff check --fix src tests scripts
-python -m ruff format src tests scripts
-scope-markers --fix src tests scripts
-python -m flake8 src tests scripts
-python scripts/check_pyright.py
-python -m pytest
-```
-
-Black and Ruff are intentionally not run as post-marker format checks. This
-repository's `scripts/check_black.py` removes standalone markers in a temporary
-copy before asking Black to format and check the source.
-
-### Flake8 and read-only tools
-
-Flake8 is safe after marker insertion, but its configuration needs to account
-for standalone marker comments. Use the repository's `.flake8` settings as a
-starting point: a 100-character limit and ignores for `E203`, `E302`, and
-`E303`. `E203` is compatible with Black; `E302` and `E303` otherwise interpret
-the marker comments as unexpected function or class spacing.
-
-Pyright, tests, packaging checks, and rumdl are also read-only with respect to
-Python marker placement and belong after Scope Markers.
-
-### Pre-commit and editor hooks
-
-Put all rewriting hooks before the marker hook and read-only hooks after it:
+Place rewriting hooks before Scope Markers and read-only hooks after it. Separate hooks
+make the Python and Markdown file types explicit:
 
 ```yaml
 repos:
@@ -639,61 +650,63 @@ repos:
     rev: <your-ruff-version>
     hooks:
       - id: ruff-check
-        args: [ --fix ]
+        args: [--fix]
       - id: ruff-format
+
   - repo: local
     hooks:
-      - id: scope-markers
-        name: scope markers
+      - id: scope-markers-python
+        name: scope markers — Python
         entry: scope-markers --fix
         language: system
-        types: [ python ]
+        types: [python]
+
+      - id: scope-markers-markdown
+        name: scope markers — Markdown fences
+        entry: scope-markers --markdown --fix
+        language: system
+        types: [markdown]
 ```
 
-When adopting scope markers in an existing repository, run the ordinary
-formatter once, then run `scope-markers --fix`. This establishes a clean
-baseline. Keep the same ordering in local commands, editor actions, hooks, and
-CI so each environment produces the same result.
+The repository also includes `.pre-commit-hooks.yaml` for a remote Python hook. Pin a
+release tag or commit when consuming it from another repository.
 
-### This repository's CI example
+## Programmatic API
 
-The canonical executable sequence is maintained in
-[`scripts/ci.py`](scripts/ci.py) and run by
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Run it locally with:
+Import supported functions from `scope_markers.api`, not from the intentionally minimal
+package root.
 
-```bash
-python scripts/ci.py
+Format in-memory Python source:
+
+```python
+from scope_markers.api import format_source
+
+formatted = format_source(source, filename="BUILD.bzl")
 ```
 
-Its formatter boundary is explicit: Ruff checks first, the compatibility check
-verifies Black on marker-free temporary copies, and `scope-markers` runs before
-the final project-specific validation. Use `python scripts/ci.py --fix` for a
-local cleanup pass that allows the safe rewriting steps to update files.
+Format eligible Python fences in Markdown:
 
-## Marker style detection
+```python
+from scope_markers.api import format_markdown_source
 
-The formatter recognizes exact standalone `##` and `####` comments. If a file
-already contains one of those styles, newly inserted markers use it. Files with
-no existing markers default to `####`. If both styles appear as standalone
-markers, formatting fails instead of guessing.
+formatted_markdown = format_markdown_source(markdown_text)
+```
 
-## Exact policy
+File-oriented APIs include `inspect_file`, `process_file`, `strip_markers`, `strip_file`,
+and `discover_python_files` for callers that need inspection, discovery, or atomic writes.
 
-One marker is emitted after each complete Python compound statement:
+## Boundary semantics
 
-- `def` and `async def`;
-- `class`;
-- complete `if` / `elif` / `else` chains;
-- complete `for` / `else`, `async for` / `else`, and `while` / `else` statements;
-- `with` and `async with`;
-- complete `try` / `except`, `except*`, `else`, and `finally` statements;
-- complete `match` statements.
+A complete-statement marker appears after the entire construct:
 
-Clause boundaries are marked at their own indentation. For example, an `if`
-chain receives one marker, while each `case` block receives a clause marker and
-the enclosing `match` statement receives its own outer marker.
+- one marker after a complete `if` / `elif` / `else` chain;
+- one marker after a loop and its optional `else`;
+- one marker after a complete `try`, including handlers, `else`, and `finally`;
+- one marker after a complete `match`.
 
-Nested statements close from the inside out:
+Clause selectors add boundaries within those constructs. Multiple selected candidates that
+resolve to the same physical boundary produce one marker. Nested statements close from
+the inside out.
 
 ```python
 def load(value: str) -> str:
@@ -706,8 +719,8 @@ def load(value: str) -> str:
 ####
 ```
 
-`match` cases receive their own clause markers in addition to the enclosing
-`match` marker:
+Under `classic`, `match` cases receive clause markers as well as the outer statement
+marker:
 
 ```python
 match value:
@@ -720,188 +733,109 @@ match value:
 ####
 ```
 
-Documentation-only and ellipsis-only function stubs are skipped by default so
-that overloads, protocols, and interface stubs remain compact. Use
-`--mark-stubs` for the literal every-compound-statement policy; it also enables
-recursive discovery of `.pyi` files:
+Documentation-only and ellipsis-only function stubs are skipped by default. Bodies that
+contain `pass` or `raise NotImplementedError` are ordinary bodies and remain eligible.
 
-```bash
-scope-markers --fix --mark-stubs src tests
+The name *scope markers* describes the visual convention, not Python's exact name-binding
+model. `if`, `for`, and `with` are intentionally eligible even though their suites do not
+create lexical name scopes. Lambdas, comprehensions, annotation scopes, and other
+expression-level scopes have no closing statement line and are not candidates.
+
+## Marker style and stripping
+
+The formatter recognizes exact standalone `##` and `####` comments. A file that already
+uses one style keeps it. Files with no managed markers default to `####`. A file containing
+both standalone styles fails instead of forcing an ambiguous choice.
+
+`--strip` removes only recognized standalone marker lines:
+
+```diff
+ def run() -> None:
+     work()
+-####
 ```
 
-`pass` bodies and `raise NotImplementedError` bodies are ordinary bodies and are
-marked without this option.
+Marker-like text inside strings, inline comments, and ordinary comments is preserved.
 
-## What is not a marker boundary
+Normal formatting removes existing managed markers before regenerating the boundaries
+selected by the active policy. Changing policy therefore removes stale markers as well as
+adding newly selected ones.
 
-The name “scope markers” describes the visual convention, not Python's precise
-name-binding model. Lambdas, comprehensions, type-parameter annotation scopes,
-and other expression-level scopes have no closing statement line where a
-standalone marker can be inserted. Conversely, `if`, `for`, and `with` suites do
-not create lexical name scopes, but they are intentionally marked because they
-are indented compound statements.
+## Safety and limitations
 
-## Parser-version rule
+For every Python source fragment, Scope Markers:
 
-The tool uses the standard-library tokenizer and AST from the Python interpreter
-running it. It therefore understands all syntax supported by that interpreter,
-but an older interpreter cannot parse syntax introduced by a newer Python
-release. Run the tool under the newest Python syntax used by the repository.
+1. detects the source encoding and tokenizes physical Python lines;
+2. identifies exact standalone managed-marker comments;
+3. optionally normalizes logical block indentation;
+4. removes managed markers and parses the clean source with the running interpreter;
+5. computes eligible statement and clause boundaries;
+6. applies the resolved policy and reinserts canonical markers;
+7. parses the result again and verifies AST equivalence.
 
-## Safety properties
+The formatter is idempotent and preserves UTF-8 BOMs, PEP 263 source encodings, LF, CRLF,
+bare-CR, and locally mixed newline conventions. It handles spaces, tabs, and leading
+form-feed characters according to Python's indentation rules.
 
-The formatter:
+Regular files are replaced atomically and retain their ordinary permission bits.
+Explicitly supplied file symlinks remain symlinks while their targets are updated.
+Recursive discovery skips symlinked files and directories.
 
-- identifies markers as real standalone comment tokens, not matching text inside
-  strings or inline comments;
-- preserves UTF-8 BOMs and PEP 263 source encodings;
-- preserves LF, CRLF, bare-CR, and locally mixed newline conventions;
-- handles spaces, tabs, and leading form-feed characters using Python's indentation rules;
-- validates that the formatted source has the same AST shape;
-- writes regular files atomically and preserves executable permission bits;
-- leaves explicitly supplied symlinks intact while updating their target;
-- skips symlinked files and directories during recursive discovery;
-- is idempotent.
+Atomic replacement creates a new inode on filesystems that expose that concept. Hard-link
+identity, extended attributes, and nonstandard filesystem metadata are outside the
+preservation contract.
 
-Atomic replacement creates a new inode on filesystems that expose that concept,
-so hard-link identity and nonstandard filesystem metadata are outside the
-formatter's preservation contract.
+Diff output preserves LF and CRLF records, reports a missing final newline explicitly,
+and quotes unusual path names independently of source encoding. Changed files with
+bare-CR line endings cannot be represented safely by the unified-diff renderer; use
+`--fix` or convert them to LF or CRLF first.
 
-## Install as a command
+Scope Markers uses the standard-library tokenizer and AST from the interpreter running it.
+Run it with the newest Python syntax used by the target repository.
 
-From a cloned checkout, install the command with one of these supported methods:
+## Focused responsibility
 
-```bash
-git clone https://github.com/sheepfling/Python-Scope-Markers.git
-cd Python-Scope-Markers
-```
+Scope Markers owns canonical marker placement in Python source and eligible Markdown code
+fences. It does not replace the surrounding toolchain.
 
-The script can always be copied directly. The project can also be installed as a
-small command-line tool:
-
-```bash
-uv tool install .
-scope-markers --fix src tests
-```
-
-The package version is managed by `setuptools-scm`. Release tags such as
-`v0.1.0` become package version `0.1.0`; untagged checkouts receive a PEP 440
-development version automatically.
-
-or:
-
-```bash
-pipx install .
-scope-markers --fix src tests
-```
-
-These commands require `uv` or `pipx` to be installed and available on `PATH`.
-If installation reports a missing command, install the corresponding tool first
-or use `python -m pip install -e .` inside a virtual environment.
-
-For a one-off local checkout, use `uvx` or `pipx run` when you want an isolated
-temporary invocation without installing a persistent application. Both commands
-resolve the package from the current checkout:
-
-```bash
-uvx --from . scope-markers --fix src tests
-pipx run --spec . scope-markers --fix src tests
-```
-
-Use `uv` or an ordinary virtual environment for the complete development tool
-set. `pipx` is intended for isolated applications, not for coordinating this
-project's pytest, Ruff, Black, Flake8, Pyright, and build dependencies:
-
-```bash
-uv sync --extra dev
-uv run python scripts/ci.py
-```
-
-## Pre-commit
-
-The project includes `.pre-commit-hooks.yaml` for use after publishing the
-repository. For an already installed local command, use a system-language hook:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: scope-markers
-        name: scope markers
-        entry: scope-markers --fix
-        language: system
-        types: [ python ]
-```
+| Concern | Responsible tool |
+|---|---|
+| Normal Python wrapping, spacing, and quoting | Ruff format or Black |
+| Marker selection and canonical placement | Scope Markers |
+| Optional logical block indentation | Scope Markers `--indent-width` |
+| Python diagnostics and type checking | Ruff, Flake8, Pyright, or similar tools |
+| Markdown structure and prose style | rumdl or another Markdown checker |
 
 ## Development
 
 ```bash
+git clone https://github.com/sheepfling/Python-Scope-Markers.git
+cd Python-Scope-Markers
+uv sync --extra dev
+uv run python scripts/ci.py
+```
+
+Apply safe cleanup steps before validation:
+
+```bash
+uv run python scripts/ci.py --fix
+```
+
+Without `uv`:
+
+```bash
 python -m pip install -e ".[dev]"
-pytest -q
-ruff check src scripts tests
-flake8 src scripts tests
-python scripts/check_pyright.py
-python scripts/check_build.py
-python -m scope_markers src scripts tests
-python scripts/check_rumdl.py
-```
-
-For ordinary Python formatting, run Black before applying the project-specific
-scope markers:
-
-```bash
-black src tests scripts
-scope-markers --fix src tests scripts
-```
-
-The complete validation roles are:
-
-| Tool                | Command                                     | Purpose                                                                   |
-|---------------------|---------------------------------------------|---------------------------------------------------------------------------|
-| Ruff                | `ruff check src scripts tests`              | Fast linting, annotation-completeness, and automatic-fix diagnostics      |
-| Diff contract       | `python scripts/check_diff.py`              | Verify emitted patches with Git across newline and encoding cases         |
-| Black               | `black src tests scripts`                   | Ordinary Python formatting before markers                                 |
-| Black compatibility | `python scripts/check_black.py`             | Black format/check smoke test with standalone markers removed             |
-| Flake8              | `flake8 src scripts tests`                  | Compatibility lint pass using `.flake8`                                   |
-| Pyright             | `python scripts/check_pyright.py`           | Strict type checking for `src`, `scripts`, and `tests`                    |
-| Pytest              | `pytest -q`                                 | Regression test suite                                                     |
-| Build               | `python scripts/check_build.py`             | Wheel packaging check                                                     |
-| Scope markers       | `python -m scope_markers src scripts tests` | Project-specific marker check                                             |
-| rumdl               | `python scripts/check_rumdl.py`             | Markdown cleanliness and style checks                                     |
-
-Ruff's annotation rules require parameters and return values to be annotated for
-new functions, methods, and test helpers. Pyright then type-checks the package
-and CI scripts in strict mode; tests are covered by Ruff and the runtime suite.
-
-Black is intentionally not run as a post-marker `--check`: Black and Ruff both
-normalize the whitespace and multiline strings around the required `####`
-markers. Flake8 is safe to run after markers because its project configuration
-matches the repository's line length and ignores the formatter-incompatible
-`E203` rule. It also ignores `E302` and `E303`, which otherwise treat the
-required standalone `####` marker comments as function or class boundaries.
-
-The complete local/CI check sequence is also available as one command:
-
-```bash
 python scripts/ci.py
 ```
 
-For a local cleanup pass, add `--fix`. This enables Ruff's safe fixes and
-allows `scope-markers` to update the source files, then runs the remaining
-checks against the result:
+The CI orchestrator runs the regression suite, diff-contract checks, Ruff, Flake8, Black
+compatibility checks, strict Pyright, package-build validation, Scope Markers' self-check,
+and rumdl. GitHub Actions validates Python 3.11 through 3.14 on Linux and Windows.
 
-```bash
-python scripts/ci.py --fix
-```
+Package versions are derived with `setuptools-scm`: a release tag such as `v0.1.0` becomes
+package version `0.1.0`, while untagged checkouts receive a PEP 440 development version.
 
-GitHub Actions runs that sequence on Python 3.11, 3.12, 3.13, and 3.14.
-
-The regression suite covers every compound-statement family, one-line suites,
-branch chains, nested same-line endings, generic definitions, marker-like text,
-multiline strings, Unicode line separators, tabs, and leading form-feed
-characters. It also covers all conventional newline forms, mixed newlines,
-BOMs, legacy encodings, executable files, symlinks, recursive discovery,
-diffs, exit statuses, syntax diagnostics, and self-idempotence.
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 [ci-badge]: https://github.com/sheepfling/Python-Scope-Markers/actions/workflows/ci.yml/badge.svg
 [ci]: https://github.com/sheepfling/Python-Scope-Markers/actions/workflows/ci.yml
