@@ -237,7 +237,8 @@ def _indentation_width(indentation: str) -> int:
 
 def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
     """Tokenize source using LF records while preserving physical source rows."""
-    lines = iter(physical_lines(source))
+    source_lines = physical_lines(source)
+    lines = iter(source_lines)
 
     def readline() -> str:
         line = next(lines, "")
@@ -249,7 +250,21 @@ def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
     ####
 
 
-    return tokenize.generate_tokens(readline)
+    def tokens() -> Iterator[tokenize.TokenInfo]:
+        try:
+            yield from tokenize.generate_tokens(readline)
+        except tokenize.TokenError as error:
+            if error.args and error.args[0] == "EOF in multi-line statement":
+                line_number = max(len(source_lines), 1)
+                raise tokenize.TokenError(
+                    "unexpected EOF in multi-line statement", (line_number, 0)
+                ) from error
+            ####
+            raise
+        ####
+    ####
+
+    return tokens()
 ####
 
 
