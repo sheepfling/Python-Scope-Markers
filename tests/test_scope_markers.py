@@ -1346,6 +1346,49 @@ def test_ignore_next_block_skips_a_boundary_and_all_nested_scopes() -> None:
 ####
 
 
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_recursive_directives_coexist_with_other_tool_directives(
+        newline: str,
+) -> None:
+    source = (
+        "# scope-markers: ignore-next-block\n"
+        "# noqa: E501\n"
+        "# pyright: ignore[reportUnusedClass] \n"
+        "# noinspection PyUnusedLocal\n"
+        "@legacy\n"
+        "class LegacyContainer:\n"
+        "    # noqa: D102\n"
+        "    def old_method(self) -> None:\n"
+        "        # pyright: ignore[reportUnreachable]\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    # noinspection PyMethodMayBeStatic\n"
+        "    def another_method(self) -> None:\n"
+        "        pass\n"
+        "def current() -> None:\n"
+        "    pass\n"
+    ).replace("\n", newline)
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted == source + f"####{newline}"
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+def test_directive_like_comments_are_not_treated_as_scope_directives() -> None:
+    source = (
+        "# noqa: scope-markers: ignore-next-block\n"
+        "# pyright: ignore[scope-markers]\n"
+        "# noinspection scope-markers: ignore-next\n"
+        "def example() -> None:\n"
+        "    pass\n"
+    )
+
+    assert scope_markers.format_source(source).endswith("    pass\n####\n")
+####
+
+
 @pytest.mark.parametrize("marker", ("##", "###", "#####"))
 @pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
 def test_local_hash_marker_style_is_detected_and_preserved(
