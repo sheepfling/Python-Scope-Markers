@@ -43,7 +43,10 @@ fallback_version = "0.1.0"
 version_scheme = "no-guess-dev"
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+# Tests do not use --lf/--ff or pytest's cache fixture. Disabling the cache
+# provider avoids shared-directory races when PyCharm and CI-style runs overlap
+# on Windows.
+addopts = "-ra -p no:cacheprovider"
 testpaths = ["tests"]
 pythonpath = [".", "src"]
 

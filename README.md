@@ -1,23 +1,126 @@
 # Scope Markers
 
-A small, standard-library-only Python formatter that inserts standalone `####`
-comments at the end of Python compound statements.
+[![CI][ci-badge]][ci]
+[![Python 3.11-3.14][python-badge]][python]
+[![Runtime dependencies: none][deps-badge]][pyproject]
 
-The runtime formatter is packaged under `src/scope_markers/`. The surrounding
-project files make it testable, installable, and suitable for CI without adding
-runtime dependencies.
+**Explicit visual endings for Python's indented compound statements.**
 
-The package is intentionally layered:
+Scope Markers is an opinionated, standard-library-only Python formatter. It
+inserts standalone `####` comments where complete compound statements end,
+making long or deeply nested code easier to scan.
 
-- `scope_markers.__init__` is intentionally kept minimal;
-- `scope_markers._implementation` contains formatting, discovery, and file operations;
-- `scope_markers.cli` owns command-line parsing and command behavior;
-- `scope_markers.__main__` provides `python -m scope_markers`.
+The formatter is deterministic, idempotent, reversible with `--strip`, and
+guarded by an AST-equivalence check. Its markers are ordinary Python comments
+and have no runtime effect.
 
-New CLI options or commands should be added to `cli.py`; new formatter behavior
-belongs in `_implementation.py`. Import implementation APIs from their owning
-module rather than relying on package-level re-exports. For programmatic use,
-import the supported functions from `scope_markers.api`.
+This is a project convention, not a claim about universal Python style. Use it
+where visible closing boundaries make the code easier for your team to read.
+
+## Example
+
+Before:
+
+```python
+def absolute(value: int) -> int:
+    if value < 0:
+        return -value
+    return value
+```
+
+After `scope-markers --fix`:
+
+```python
+def absolute(value: int) -> int:
+    if value < 0:
+        return -value
+    ####
+    return value
+####
+```
+
+A marker's indentation identifies the statement it closes. Unlike labels such
+as `# end if` or `# end function`, `####` copies no identifier or clause name
+that can become stale; Scope Markers regenerates placement from parsed source.
+
+## Installation
+
+Scope Markers requires Python 3.11 or newer.
+
+Install the command from the repository with `uv`:
+
+```bash
+uv tool install git+https://github.com/sheepfling/Python-Scope-Markers.git
+```
+
+Or with `pipx`:
+
+```bash
+pipx install git+https://github.com/sheepfling/Python-Scope-Markers.git
+```
+
+For a one-off invocation:
+
+```bash
+uvx --from git+https://github.com/sheepfling/Python-Scope-Markers.git \
+    scope-markers --diff .
+```
+
+From a cloned checkout, use `uv tool install .`, `pipx install .`, or
+`python -m pip install -e .` in a virtual environment. The installed command
+and module entry point are equivalent:
+
+```bash
+scope-markers --help
+python -m scope_markers --help
+```
+
+## Quick start
+
+Check files without changing them, then apply or inspect the proposed markers:
+
+```bash
+scope-markers .          # Check; do not modify files.
+scope-markers --diff .   # Print the proposed patch.
+scope-markers --fix .    # Canonicalize markers in place.
+```
+
+For example, this source:
+
+```python
+class Worker:
+    def run(self, ready: bool) -> None:
+        if ready:
+            work()
+```
+
+becomes:
+
+```python
+class Worker:
+    def run(self, ready: bool) -> None:
+        if ready:
+            work()
+        ####
+    ####
+####
+```
+
+## Focused responsibility
+
+Scope Markers owns one convention: canonical standalone markers at Python
+compound-statement boundaries. It is not a general formatter, linter, type
+checker, Markdown checker, or plugin framework.
+
+| Concern                                              | Responsible tool                        |
+|------------------------------------------------------|-----------------------------------------|
+| Normal Python layout, wrapping, spacing, and quoting | Ruff format or Black                    |
+| Canonical standalone scope markers                   | Scope Markers                           |
+| Optional logical block indentation                   | Scope Markers `--indent-width`          |
+| Python diagnostics and type checking                 | Ruff, Flake8, Pyright, or similar tools |
+| Markdown style in this repository                    | rumdl                                   |
+
+## Python API
 
 ```python
 from scope_markers.api import format_source
@@ -25,25 +128,12 @@ from scope_markers.api import format_source
 formatted = format_source(source, filename="BUILD.bzl")
 ```
 
-## Quick use
+The API returns formatted text without modifying files. File-oriented API
+functions are also available for callers that need inspection or atomic writes:
+`inspect_file`, `process_file`, `strip_markers`, `strip_file`, and
+`discover_python_files`.
 
-Check files without changing them:
-
-```bash
-scope-markers src tests scripts
-```
-
-Canonicalize files in place:
-
-```bash
-scope-markers --fix src tests scripts
-```
-
-Show the proposed changes:
-
-```bash
-scope-markers --diff src tests scripts
-```
+## Discovery and common options
 
 With no paths, the current directory is scanned recursively. Common VCS,
 virtual-environment, cache, dependency, and build directories are pruned.
@@ -54,23 +144,22 @@ pruning and custom excludes. Use `--mark-stubs` to include `.pyi` files.
 
 The default directory exclusions include common VCS, virtual-environment,
 cache, build, and dependency directories such as `.git`, `.venv`, `.uv-cache`,
-`.cache`, `build`, `dist`, `*.egg-info`, and `node_modules`. Use `--no-default-excludes` when
-you intentionally need to scan those directories; explicit `--exclude`
-patterns still apply.
+`.cache`, `build`, `dist`, `*.egg-info`, and `node_modules`. Use
+`--no-default-excludes` when you intentionally need to scan those directories;
+explicit `--exclude` patterns still apply.
 
 The default invocation is check mode: it reports files needing markers and
-returns exit status `1` without changing them. Use `--diff` to show a patch or
-`--fix` to write changes:
+returns exit status `1` without changing them. These options cover the common
+workflow:
 
 ```bash
-scope-markers src tests                 # check only
-scope-markers --diff src tests          # check and print a patch
-scope-markers --fix src tests           # rewrite files
 scope-markers --strip --fix src tests   # remove standalone scope markers
-scope-markers --mark-stubs --fix src    # include .pyi files and mark stub-only functions
-scope-markers --indent-width 2 --fix src  # use two-space block indentation and mark
-scope-markers --verbose src tests       # report every file's status
-scope-markers --fail-fast .             # stop at the first needed fix/error
+scope-markers --mark-stubs --fix src     # include .pyi files
+scope-markers --indent-width 2 --fix src # normalize block indentation
+scope-markers --verbose src tests        # report every file's status
+scope-markers --quiet --fix src tests    # suppress status output
+scope-markers --fail-fast .              # stop at the first problem
+scope-markers --version                  # show the installed version
 ```
 
 `--quiet` and `--verbose` are mutually exclusive. In `--diff` mode, standard
@@ -79,14 +168,17 @@ standard error. This keeps both changed and already-clean runs safe to redirect
 to a patch file. `--diff --verbose` additionally reports each file's status on
 standard error.
 
+Every command also works as `python -m scope_markers` when the console script
+is not on `PATH`.
+
 `--indent-width WIDTH` normalizes logical Python block indentation to that many
 spaces before scope markers are regenerated. It converts block-indentation tabs
 to spaces and adjusts block comments, but deliberately preserves multiline
 continuation alignment and blank-line whitespace. It is not a replacement for
 a full code formatter; when using one, run it before scope markers.
 
-To reverse scope-marker insertion, use `--strip`. It removes exact standalone
-`##` and `####` marker comments only; comments containing marker-like text and
+To reverse, or unscope, a file, use `--strip`. It removes exact standalone `##`
+and `####` marker comments only; comments containing marker-like text and
 ordinary source lines remain unchanged. Like normal formatting, it supports
 check mode, `--diff`, and `--fix`. `--strip` intentionally cannot be combined
 with `--indent-width`, because stripping does not reformat code:
@@ -141,49 +233,51 @@ Exit statuses are stable:
 - `1`: changes are needed in check or diff mode;
 - `2`: discovery, decoding, tokenization, parsing, or I/O error.
 
-## Formatter ordering
+## Composing with formatters and linters
 
-Run ordinary formatters first and scope markers last:
+Scope markers must be the last tool that rewrites Python layout. They are
+ordinary comments to Ruff, Black, YAPF, autopep8, and editor formatters; those
+tools do not know that `####` represents a scope boundary.
+
+Use this order whenever more than one tool processes the same files:
+
+```text
+1. Import sorting and autofixes
+2. Ruff check --fix or another linter's autofixes
+3. Ruff format, Black, or another code formatter
+4. scope-markers --fix
+5. Read-only checks: Flake8, Pyright, tests, and packaging
+```
+
+For this project, the corresponding command sequence is:
 
 ```bash
 python -m ruff check --fix src tests scripts
 python -m ruff format src tests scripts
 scope-markers --fix src tests scripts
+python -m flake8 src tests scripts
+python scripts/check_pyright.py
+python -m pytest
 ```
 
-Ruff does not know this project-specific marker convention, so running Ruff after
-scope markers may move surrounding code without restoring the markers.
+The important rule is that every tool capable of changing source text runs
+before `scope-markers`. If Black or Ruff runs afterward, it may move code,
+normalize blank lines around markers, or rewrite multiline strings without
+regenerating the affected markers. The next marker check can then report
+changes, producing formatter churn.
 
-## Using scope markers with downstream tooling
+If an editor formats on save, configure it either to run before the marker step
+or to exclude marker-managed files. If a downstream formatter must run later,
+run `scope-markers --fix` again as the final step before committing.
 
-Treat scope-marker insertion as the final formatting stage for any files that
-contain markers. A downstream pipeline should use this order:
+Flake8 is safe after marker insertion, but its configuration needs to account
+for standalone marker comments. Use the repository's `.flake8` settings as a
+starting point: a 100-character limit and ignores for `E203`, `E302`, and
+`E303`. `E203` is compatible with Black; `E302` and `E303` otherwise interpret
+the marker comments as unexpected function or class spacing.
 
-```text
-1. Ruff check --fix, or another linter's autofixes
-2. Ruff format or Black
-3. scope-markers --fix
-4. Flake8, Pyright, tests, and packaging checks
-```
-
-Keep this ordering as a pipeline contract when adding or upgrading hooks: every
-formatter or autofix hook that can change Python layout belongs before
-`scope-markers`, while read-only linting, type checking, tests, and packaging
-belong after it. This keeps pre-commit, local editor actions, and CI consistent.
-
-Do not run Ruff format or Black after `scope-markers --fix`. Both formatters
-interpret `####` as an ordinary comment and may normalize the blank lines around
-markers or rewrite multiline string literals. There is no formatter rule that
-makes them understand `####` as a scope boundary. If a downstream editor runs
-format-on-save, configure it to run before scope-marker insertion or exclude
-marker-managed files from that formatter.
-
-Flake8 can run after marker insertion. Match this project's settings if you want
-consistent results: use a 100-character line limit and ignore `E203`, while
-excluding virtual environments, build outputs, and cache directories. The
-repository's `.flake8` file is a ready-to-copy example.
-
-For pre-commit, place the ordinary formatter hooks before the scope-marker hook:
+For pre-commit, put all rewriting hooks before the marker hook and read-only
+hooks after it:
 
 ```yaml
 repos:
@@ -202,9 +296,10 @@ repos:
         types: [ python ]
 ```
 
-If files already contain scope markers, run the ordinary formatter once before
-enabling the marker hook. Later changes should flow through the same order
-to avoid formatter churn.
+When adopting scope markers in an existing repository, run the ordinary
+formatter once, then run `scope-markers --fix`. This establishes a clean
+baseline. Keep the same ordering in local commands, editor actions, hooks, and
+CI so each environment produces the same result.
 
 ## Marker style detection
 
@@ -411,3 +506,10 @@ multiline strings, Unicode line separators, tabs, and leading form-feed
 characters. It also covers all conventional newline forms, mixed newlines,
 BOMs, legacy encodings, executable files, symlinks, recursive discovery,
 diffs, exit statuses, syntax diagnostics, and self-idempotence.
+
+[ci-badge]: https://github.com/sheepfling/Python-Scope-Markers/actions/workflows/ci.yml/badge.svg
+[ci]: https://github.com/sheepfling/Python-Scope-Markers/actions/workflows/ci.yml
+[deps-badge]: https://img.shields.io/badge/runtime%20dependencies-none-success
+[pyproject]: pyproject.toml
+[python-badge]: https://img.shields.io/badge/Python-3.11--3.14-3776AB?logo=python&logoColor=white
+[python]: https://www.python.org/
