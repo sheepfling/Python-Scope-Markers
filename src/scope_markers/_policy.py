@@ -45,6 +45,11 @@ class BoundaryKind(StrEnum):
 ####
 
 
+def _empty_boundary_kind_set() -> frozenset[BoundaryKind]:
+    return frozenset()
+####
+
+
 ALL_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     kind for kind in BoundaryKind
 )
@@ -192,6 +197,12 @@ class MarkerPolicy:
     stub_policy: str = "skip"
     rules: Mapping[BoundaryKind, RuleOverride] = field(
         default_factory=lambda: MappingProxyType({})
+    )
+    selector_extensions: frozenset[BoundaryKind] = field(
+        default_factory=_empty_boundary_kind_set, repr=False, compare=False
+    )
+    selector_exclusions: frozenset[BoundaryKind] = field(
+        default_factory=_empty_boundary_kind_set, repr=False, compare=False
     )
 
     def allows(
@@ -393,18 +404,30 @@ def policy_with_cli_overrides(
         mark_stubs: bool = False,
 ) -> MarkerPolicy:
     """Apply command-line policy values after TOML settings."""
+    extensions: frozenset[BoundaryKind] = policy.selector_extensions
+    exclusions: frozenset[BoundaryKind] = policy.selector_exclusions
+    base_selection = policy.selected
     if preset is not None:
         if preset not in PRESETS:
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
         ####
-        policy = replace(policy, selected=PRESETS[preset])
+        base_selection = PRESETS[preset]
+        extensions = frozenset[BoundaryKind]()
+        exclusions = frozenset[BoundaryKind]()
     ####
     if select:
-        policy = replace(policy, selected=expand_selectors(selector_values(select)))
+        base_selection = expand_selectors(selector_values(select))
+        extensions = frozenset[BoundaryKind]()
+        exclusions = frozenset[BoundaryKind]()
     ####
-    selected = policy.selected | expand_selectors(selector_values(extend_select))
-    selected = selected - expand_selectors(selector_values(ignore))
-    values: dict[str, object] = {"selected": selected}
+    extensions |= expand_selectors(selector_values(extend_select))
+    exclusions |= expand_selectors(selector_values(ignore))
+    selected = (base_selection | extensions) - exclusions
+    values: dict[str, object] = {
+        "selected": selected,
+        "selector_extensions": extensions,
+        "selector_exclusions": exclusions,
+    }
     for key, value in (
             ("skip_inline_suites", skip_inline_suites),
             ("min_span_lines", min_span_lines),
@@ -484,19 +507,31 @@ def _load_configuration(config: Path | None) -> _PolicyConfiguration:
 
 
 def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> MarkerPolicy:
+    extensions = policy.selector_extensions
+    exclusions = policy.selector_exclusions
+    base_selection = policy.selected
     if "preset" in settings:
         preset = _string(settings, "preset", "classic")
         if preset not in PRESETS:
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
         ####
-        policy = replace(policy, selected=PRESETS[preset])
+        base_selection = PRESETS[preset]
     ####
     if "select" in settings:
-        policy = replace(policy, selected=expand_selectors(_string_array(settings, "select")))
+        base_selection = expand_selectors(_string_array(settings, "select"))
     ####
-    selected = policy.selected | expand_selectors(_string_array(settings, "extend-select"))
-    selected = selected - expand_selectors(_string_array(settings, "ignore"))
-    policy = _replace_filters(replace(policy, selected=selected), settings)
+    extensions |= expand_selectors(_string_array(settings, "extend-select"))
+    exclusions |= expand_selectors(_string_array(settings, "ignore"))
+    selected = (base_selection | extensions) - exclusions
+    policy = _replace_filters(
+        replace(
+            policy,
+            selected=selected,
+            selector_extensions=extensions,
+            selector_exclusions=exclusions,
+        ),
+        settings,
+    )
     if "rules" not in settings:
         return policy
     ####

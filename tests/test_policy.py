@@ -171,6 +171,29 @@ def test_per_file_override_applies_all_layers_in_order(tmp_path: Path) -> None:
 ####
 
 
+def test_per_file_preset_preserves_accumulated_selector_arithmetic(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    source = tmp_path / "src" / "example.py"
+    source.parent.mkdir()
+    config.write_text(
+        'preset = "classic"\n'
+        'extend-select = ["clause.if.else"]\n'
+        'ignore = ["statement.if"]\n'
+        "\n"
+        "[[per-file]]\n"
+        'patterns = ["src/**"]\n'
+        'preset = "statements"\n',
+        encoding="utf-8",
+    )
+    source.write_text("if ready:\n    work()\nelse:\n    recover()\n", encoding="utf-8")
+
+    policy = api.resolve_policy(config, source)
+
+    assert api.BoundaryKind.STATEMENT_IF not in policy.selected
+    assert api.BoundaryKind.CLAUSE_IF_ELSE in policy.selected
+####
+
+
 def test_cli_overrides_configuration_for_every_policy_layer(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
