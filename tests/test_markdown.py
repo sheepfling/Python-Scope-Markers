@@ -54,6 +54,21 @@ def test_format_markdown_source_formats_python_fences_only() -> None:
 ####
 
 
+def test_format_markdown_source_skips_python_looking_fences_inside_text() -> None:
+    source = (
+        "~~~text\n"
+        "The following is a literal nested-looking example:\n"
+        "```python\n"
+        "if ready:\n"
+        "    pass\n"
+        "```\n"
+        "~~~\n"
+    )
+
+    assert api.format_markdown_source(source) == source
+####
+
+
 def test_format_markdown_source_preserves_indented_fence_prefix() -> None:
     source = (
         "  ```python\n"

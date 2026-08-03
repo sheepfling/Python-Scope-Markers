@@ -29,7 +29,7 @@ _PYTHON_IGNORE_PATTERN = re.compile(
 )
 
 
-def _fence_opening(line: str) -> tuple[str, str, bool] | None:
+def _fence_parts(line: str) -> tuple[str, str, str] | None:
     body = line.rstrip("\r\n")
     match = _FENCE_PATTERN.match(body)
     if match is None:
@@ -39,12 +39,7 @@ def _fence_opening(line: str) -> tuple[str, str, bool] | None:
     if len(set(fence)) != 1 or (fence[0] == "`" and "`" in match.group(3)):
         return None
     ####
-    info = match.group(3).strip()
-    language = info.split(maxsplit=1)
-    if not language or language[0].casefold() not in PYTHON_FENCE_LANGUAGES:
-        return None
-    ####
-    return match.group(1), fence, _FENCE_IGNORE_PATTERN.search(info) is not None
+    return match.group(1), fence, match.group(3).strip()
 ####
 
 
@@ -126,12 +121,12 @@ def format_markdown_source(
     formatted_lines = list(lines)
     index = 0
     while index < len(lines):
-        opening = _fence_opening(lines[index])
-        if opening is None:
+        parts = _fence_parts(lines[index])
+        if parts is None:
             index += 1
             continue
         ####
-        indentation, fence, ignore = opening
+        indentation, fence, info = parts
         closing_index = index + 1
         while closing_index < len(lines) and not _is_fence_closing(
                 lines[closing_index], indentation, fence
@@ -142,6 +137,12 @@ def format_markdown_source(
             index += 1
             continue
         ####
+        language = info.split(maxsplit=1)
+        if not language or language[0].casefold() not in PYTHON_FENCE_LANGUAGES:
+            index = closing_index + 1
+            continue
+        ####
+        ignore = _FENCE_IGNORE_PATTERN.search(info) is not None
         original_payload = tuple(lines[index + 1:closing_index])
         if ignore or _has_python_ignore_directive(
                 _remove_fence_indentation(original_payload, indentation)
