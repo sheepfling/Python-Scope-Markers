@@ -1,22 +1,8 @@
 """Stable programmatic API for scope-marker formatting.
 
-This module is the supported import boundary for library users. The
-implementation remains in a private module so formatting internals can evolve
-without requiring callers to import private names directly. Use
-``format_source`` for in-memory text, ``inspect_file`` for read-only file
-inspection, ``process_file`` for checking or rewriting one file,
-``strip_markers``/``strip_file`` for removal, and
-``discover_python_files``/``python_files`` for discovery. Pass
-``include_stubs=True`` to the discovery functions when `.pyi` files belong in
-the result, or pass ``indent_width`` to formatting or file-inspection functions
-to normalize logical block indentation before markers are regenerated. Use
-``format_markdown_source`` and ``inspect_markdown_file`` for Python fences in
-Markdown, or ``process_markdown_file`` to check or rewrite one Markdown file.
-Use ``MarkerPolicy`` with ``format_source`` or the file-inspection functions
-when callers need a policy other than the compatibility-preserving default.
-Use ``resolve_policy`` to apply a TOML configuration's ordered per-file
-overrides, and ``explain_source`` or ``explain_file`` to inspect each policy
-decision without modifying source.
+Import public formatting, discovery, policy, and Markdown operations from this
+module. The implementation remains private so its internals can evolve without
+requiring callers to depend on private names.
 """
 
 from ._implementation import (
