@@ -17,6 +17,10 @@ AST-equivalence check. Its markers are ordinary Python comments and have no runt
 The recommended default is the `statements` preset: it closes complete compound statements
 and adds one marker for the final `match` case before the enclosing `match` marker.
 
+> **CI ordering:** `scope-markers --fix` changes files. Run Ruff fixes and your ordinary Python
+> formatter first, then run Scope Markers, and only afterward run read-only linting, type checks,
+> tests, packaging checks, and documentation checks. A later formatter can make markers stale.
+
 ## What it does
 
 - marks complete functions, classes, conditionals, loops, context managers, exception
@@ -726,6 +730,11 @@ release tag or commit when consuming it from another repository.
 When a project uses both `scope-markers` and `mdrepo`, install the pinned alpha releases in
 the development environment:
 
+The important integration rule is sequencing: run all formatters, marker rewrites, tests, and
+generated-artifact steps first, then run the final read-only checks from the repository root.
+`mdrepo check .` is repository-root and configuration sensitive; a subdirectory invocation can
+resolve a different project configuration or filesystem scope.
+
 ```toml
 [project.optional-dependencies]
 dev = [
@@ -734,24 +743,64 @@ dev = [
 ]
 ```
 
-Run from the repository root. Apply rewriting tools before the read-only gate:
+Run from the repository root. The canonical cross-platform commands are:
 
 ```bash
-ruff check --fix
+python -m ruff check --fix src scripts tests
+python -m ruff format src scripts tests
 python -m scope_markers --fix src scripts tests
-ruff check
+python -m pytest
 python -m scope_markers src scripts tests
-pytest
 python -m mdrepo check .
 ```
 
-`--fix` changes Python files; the check invocation is read-only and returns `1` when markers
-are missing or stale. Both commands scan every Python tree participating in the project, not
-just `src/`. Use `--exclude` or project configuration for generated, scratch, vendor, or legacy
-paths. Scope Markers skips its documented default directories, including `.git`, `.venv`, build
-outputs, and caches. On Windows, use `python -m scope_markers` rather than relying on an
-installed shell executable. Exit status `2` indicates a configuration, discovery, parsing,
-encoding, diff, or I/O failure.
+The mutating commands are Ruff's `--fix` mode, Ruff format, and `scope_markers --fix`. The later
+Scope Markers check, tests, and `mdrepo check .` are read-only. Scope Markers should be the final
+tool that rewrites marker-managed Python layout: run import sorting, Ruff automatic fixes,
+formatters, and Markdown-fence formatters first. Run packaging and generated-artifact steps before
+the final read-only gate if those files are in scope.
+
+The Scope Markers check returns `0` when no changes are needed, `1` when markers are missing or
+stale, and `2` for configuration, discovery, parsing, encoding, diff, or I/O failures. `mdrepo`
+returns `0` for a clean policy check, `1` for a finding at or above `fail-on`, and `2` for
+configuration, invocation, discovery, parsing, or safe-fix failures. Both are suitable for direct
+CI failure handling.
+
+Both tools must run from the repository root when checking the complete project. `scope-markers`
+discovers the nearest `scope-markers.toml`, `.scope-markers.toml`, or `pyproject.toml` containing
+`[tool.scope-markers]`; `--config` selects one explicit configuration and `--isolated` disables
+discovery. `mdrepo` independently discovers its nearest `pyproject.toml` with `[tool.mdrepo]`,
+`mdrepo.toml`, or `.mdrepo.toml`. Neither tool reads the other's configuration.
+
+Scope Markers skips its documented default directories, including `.git`, `.venv`, build outputs,
+and caches. Use `--exclude` or project configuration for generated, scratch, vendor, and legacy
+paths. `mdrepo` has its own `include`/`exclude` policy and does not automatically apply `.gitignore`;
+configure those exclusions explicitly. On Windows, use `python -m scope_markers` and
+`python -m mdrepo` rather than relying on shell-installed executables. The same module commands
+work on Windows PowerShell, macOS, and Linux shells.
+
+A minimal GitHub Actions job is:
+
+```yaml
+name: Documentation policy
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m scope_markers src scripts tests
+      - run: python -m mdrepo check .
+```
 
 ## Programmatic API
 
