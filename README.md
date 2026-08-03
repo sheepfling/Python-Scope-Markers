@@ -424,7 +424,7 @@ Use this order whenever more than one tool processes the same files:
 
 ```text
 1. Import sorting and automatic fixes
-2. Ruff check --fix or another linter's autofixes
+2. Ruff check --fix or another linter's automatic fixes
 3. Ruff format, Black, or another code formatter
 4. scope-markers --fix
 5. Read-only checks: Flake8, Pyright, tests, and packaging
@@ -444,7 +444,7 @@ later formatter.
 
 ### Ruff and Black
 
-Run Ruff autofixes and ordinary formatting before Scope Markers:
+Run Ruff automatic fixes and ordinary formatting before Scope Markers:
 
 ```bash
 python -m ruff check --fix src tests scripts
@@ -699,7 +699,7 @@ The complete validation roles are:
 
 | Tool                | Command                                     | Purpose                                                                   |
 |---------------------|---------------------------------------------|---------------------------------------------------------------------------|
-| Ruff                | `ruff check src scripts tests`              | Fast linting, annotation-completeness, and autofix-compatible diagnostics |
+| Ruff                | `ruff check src scripts tests`              | Fast linting, annotation-completeness, and automatic-fix diagnostics      |
 | Diff contract       | `python scripts/check_diff.py`              | Verify emitted patches with Git across newline and encoding cases         |
 | Black               | `black src tests scripts`                   | Ordinary Python formatting before markers                                 |
 | Black compatibility | `python scripts/check_black.py`             | Black format/check smoke test with standalone markers removed             |
