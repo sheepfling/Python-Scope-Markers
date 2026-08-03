@@ -102,6 +102,19 @@ def test_format_markdown_source_preserves_opted_out_python_fences(option: str) -
 ####
 
 
+@pytest.mark.parametrize(
+    "directive", ("# no-scope-markers", "# scope-markers: off", "# scope-markers=ignore")
+)
+def test_format_markdown_source_preserves_python_fence_with_directive(
+        directive: str,
+) -> None:
+    source = f"```python\n\n{directive}\nif ready:\n    pass\n```\n"
+
+    assert api.format_markdown_source(source) == source
+    assert api.format_markdown_source(source, strip=True) == source
+####
+
+
 def test_cli_markdown_mode_fixes_markdown_file(tmp_path: Path) -> None:
     path = tmp_path / "README.md"
     path.write_text("```python\ndef example():\n    pass\n```\n", encoding="utf-8")

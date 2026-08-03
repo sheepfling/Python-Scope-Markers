@@ -22,6 +22,10 @@ _FENCE_IGNORE_PATTERN = re.compile(
     r"(?:\bno-scope-markers\b|\bscope-markers\s*[:=]\s*(?:off|ignore|false)\b)",
     re.IGNORECASE,
 )
+_PYTHON_IGNORE_PATTERN = re.compile(
+    r"^#\s*(?:no-scope-markers|scope-markers\s*[:=]\s*(?:off|ignore|false))\s*$",
+    re.IGNORECASE,
+)
 
 
 def _fence_opening(line: str) -> tuple[str, str, bool] | None:
@@ -53,6 +57,18 @@ def _is_fence_closing(line: str, indentation: str, fence: str) -> bool:
         return False
     ####
     return not remainder[len(fence):].strip(fence[0] + " \t")
+####
+
+
+def _has_python_ignore_directive(lines: Sequence[str]) -> bool:
+    """Return whether the first content line opts a Python fence out."""
+    for line in lines:
+        content = line.strip(" \t\r\n")
+        if content:
+            return _PYTHON_IGNORE_PATTERN.fullmatch(content) is not None
+        ####
+    ####
+    return False
 ####
 
 
@@ -124,11 +140,13 @@ def format_markdown_source(
             index += 1
             continue
         ####
-        if ignore:
+        original_payload = tuple(lines[index + 1:closing_index])
+        if ignore or _has_python_ignore_directive(
+                _remove_fence_indentation(original_payload, indentation)
+        ):
             index = closing_index + 1
             continue
         ####
-        original_payload = tuple(lines[index + 1:closing_index])
         payload = "".join(_remove_fence_indentation(original_payload, indentation))
         if strip:
             formatted_payload = strip_markers(payload)
