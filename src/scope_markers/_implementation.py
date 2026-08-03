@@ -18,7 +18,7 @@ from typing import Final, cast
 
 from ._errors import FILE_PROCESSING_ERRORS, ScopeMarkersError, format_error
 from ._paths import display_path
-from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, classic_policy
+from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, statements_policy
 from ._source import physical_lines, read_source, write_atomic
 from ._types import BoundaryExplanation, FileInspection, ScopeBoundary
 
@@ -29,10 +29,10 @@ except PackageNotFoundError:
 ####
 
 
-# ``####`` is the documented default; existing standalone markers can select
-# ``##`` or ``####`` for compatibility with an already-formatted source tree.
+# ``####`` is the documented default. A file may instead establish another
+# standalone run of two or more ``#`` characters as its local marker style.
 MARKER: Final = "####"
-MARKER_STYLES: Final = ("##", "####")
+MIN_MARKER_LENGTH: Final = 2
 MARKDOWN_SUFFIXES: Final = frozenset({".md", ".markdown"})
 # These are generated, cached, or environment-managed trees that should not
 # be traversed by default. The CLI exposes --no-default-excludes when needed.
@@ -83,6 +83,8 @@ COMPOUND_STATEMENTS: Final = (
 class _BoundaryCandidate:
     """A policy-independent analyzed marker insertion candidate."""
 
+    owner: ast.AST
+    block_end_line: int
     kind: BoundaryKind
     boundary: ScopeBoundary
     span_lines: int
@@ -92,6 +94,63 @@ class _BoundaryCandidate:
     depth: int
     facts: frozenset[str]
     inline_suite: bool
+####
+
+
+_PhysicalBoundaryIdentity = tuple[int, str]
+_CandidateIdentity = tuple[BoundaryKind, int, str]
+
+
+def _physical_boundary_identity(candidate: _BoundaryCandidate) -> _PhysicalBoundaryIdentity:
+    """Identify the rendered insertion point, independent of candidate kind."""
+    return (candidate.boundary.index, candidate.boundary.indentation)
+####
+
+
+def _candidate_identity(candidate: _BoundaryCandidate) -> _CandidateIdentity:
+    """Identify a logical candidate without collapsing different boundary kinds."""
+    index, indentation = _physical_boundary_identity(candidate)
+    return (candidate.kind, index, indentation)
+####
+
+
+def _is_clause_candidate(candidate: _BoundaryCandidate) -> bool:
+    """Return whether a candidate represents one internal suite or clause."""
+    return candidate.kind.value.startswith("clause.")
+####
+
+
+def _is_statement_candidate(candidate: _BoundaryCandidate) -> bool:
+    """Return whether a candidate represents a complete compound statement."""
+    return candidate.kind.value.startswith("statement.")
+####
+
+
+def _directive_candidate_sort_key(
+        candidate: _BoundaryCandidate,
+) -> tuple[int, int, int, str]:
+    """Order candidates by source header, preferring its complete statement."""
+    return (
+        candidate.boundary.line_number,
+        1 if _is_clause_candidate(candidate) else 0,
+        candidate.boundary.index,
+        str(candidate.kind),
+    )
+####
+
+
+def _next_directive_candidate(
+        candidates: Sequence[_BoundaryCandidate], row: int
+) -> _BoundaryCandidate | None:
+    """Return the next semantic boundary after a source directive row."""
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.boundary.line_number > row
+        ),
+        None,
+    )
 ####
 
 
@@ -113,15 +172,18 @@ def _has_file_scope_opt_out(lines: Sequence[str], first_content_row: int | None)
 ####
 
 
-def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]]:
-    """Return the file opt-out and standalone ``ignore-next`` comment rows."""
+def _scope_marker_directives(
+        lines: Sequence[str],
+) -> tuple[bool, frozenset[int], frozenset[int]]:
+    """Return file opt-out, one-boundary, and recursive directive rows."""
     first_content_row = _first_content_row(lines)
     # A file-level opt-out must bypass tokenization: the opted-out source may
     # intentionally be incomplete or otherwise invalid Python.
     if _has_file_scope_opt_out(lines, first_content_row):
-        return True, frozenset()
+        return True, frozenset(), frozenset()
     ####
     ignore_next_rows: set[int] = set()
+    ignore_next_block_rows: set[int] = set()
     off_rows: set[int] = set()
     for token in _token_stream("".join(lines)):
         if token.type != tokenize.COMMENT:
@@ -140,9 +202,15 @@ def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]
             off_rows.add(row)
         elif directive == "# scope-markers: ignore-next":
             ignore_next_rows.add(row)
+        elif directive == "# scope-markers: ignore-next-block":
+            ignore_next_block_rows.add(row)
         ####
     ####
-    return first_content_row in off_rows, frozenset(ignore_next_rows)
+    return (
+        first_content_row in off_rows,
+        frozenset(ignore_next_rows),
+        frozenset(ignore_next_block_rows),
+    )
 ####
 
 
@@ -268,17 +336,21 @@ def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
 ####
 
 
-def _marker_lines_from_tokens(
-        tokens: Iterable[tokenize.TokenInfo], lines: Sequence[str], marker: str
-) -> set[int]:
-    marker_lines: set[int] = set()
+def _marker_styles_from_tokens(
+        tokens: Iterable[tokenize.TokenInfo], lines: Sequence[str]
+) -> dict[str, set[int]]:
+    marker_lines: dict[str, set[int]] = {}
     for token in tokens:
-        if token.type != tokenize.COMMENT or token.string.rstrip(" \t\f") != marker:
+        if token.type != tokenize.COMMENT:
+            continue
+        ####
+        marker = token.string.rstrip(" \t\f")
+        if len(marker) < MIN_MARKER_LENGTH or set(marker) != {"#"}:
             continue
         ####
         row = token.start[0]
         if 1 <= row <= len(lines) and _line_body(lines[row - 1]).strip(" \t\f") == marker:
-            marker_lines.add(row - 1)
+            marker_lines.setdefault(marker, set()).add(row - 1)
         ####
     ####
     return marker_lines
@@ -313,19 +385,24 @@ def _indentation_safe_source(source: str) -> str:
 
 
 def _standalone_marker_lines(source: str, marker: str) -> set[int]:
+    return _standalone_marker_styles(source).get(marker, set())
+####
+
+
+def _standalone_marker_styles(source: str) -> dict[str, set[int]]:
     lines = physical_lines(source)
     try:
-        return _marker_lines_from_tokens(_token_stream(source), lines, marker)
+        return _marker_styles_from_tokens(_token_stream(source), lines)
     except IndentationError:
-        return _marker_lines_from_tokens(
-            _token_stream(_indentation_safe_source(source)), lines, marker
+        return _marker_styles_from_tokens(
+            _token_stream(_indentation_safe_source(source)), lines
         )
     ####
 ####
 
 
 def _detect_marker_style(source: str) -> str:
-    styles = {marker for marker in MARKER_STYLES if _standalone_marker_lines(source, marker)}
+    styles = set(_standalone_marker_styles(source))
     if len(styles) > 1:
         found = ", ".join(sorted(styles))
         raise ScopeMarkersError(
@@ -349,10 +426,11 @@ def _without_markers(source: str, marker: str) -> str:
 
 def strip_markers(source: str) -> str:
     """Remove every standalone recognized scope-marker comment from source."""
-    marker_lines: set[int] = set()
-    for marker in MARKER_STYLES:
-        marker_lines.update(_standalone_marker_lines(source, marker))
-    ####
+    marker_lines = {
+        line_number
+        for lines in _standalone_marker_styles(source).values()
+        for line_number in lines
+    }
     if not marker_lines:
         return source
     ####
@@ -572,16 +650,19 @@ def _scope_boundaries(
         policy: MarkerPolicy,
 ) -> list[ScopeBoundary]:
     boundaries: list[ScopeBoundary] = []
-    seen: set[tuple[int, str]] = set()
+    seen: set[_PhysicalBoundaryIdentity] = set()
     candidates = _boundary_candidates(tree, lines)
-    ignored = _ignored_candidate_identities(candidates, lines, policy)
+    ignored = _ignored_candidate_identities(candidates, lines, policy, _parents(tree))
     for candidate in candidates:
-        identity = (candidate.boundary.index, candidate.boundary.indentation)
-        if identity in ignored or not _candidate_decision(candidate, policy).allowed:
+        physical_identity = _physical_boundary_identity(candidate)
+        if (
+            _candidate_identity(candidate) in ignored
+            or not _candidate_decision(candidate, policy).allowed
+        ):
             continue
         ####
-        if identity not in seen:
-            seen.add(identity)
+        if physical_identity not in seen:
+            seen.add(physical_identity)
             boundaries.append(candidate.boundary)
         ####
     ####
@@ -593,9 +674,10 @@ def _ignored_candidate_identities(
         candidates: Sequence[_BoundaryCandidate],
         lines: Sequence[str],
         policy: MarkerPolicy,
-) -> set[tuple[int, str]]:
-    _, ignore_next_rows = _scope_marker_directives(lines)
-    if not ignore_next_rows:
+        parents: Mapping[int, ast.AST],
+) -> set[_CandidateIdentity]:
+    _, ignore_next_rows, ignore_next_block_rows = _scope_marker_directives(lines)
+    if not ignore_next_rows and not ignore_next_block_rows:
         return set()
     ####
     selected = sorted(
@@ -604,24 +686,50 @@ def _ignored_candidate_identities(
             for candidate in candidates
             if _candidate_decision(candidate, policy).allowed
         ),
-        key=lambda candidate: (
-            candidate.boundary.line_number,
-            candidate.boundary.index,
-            str(candidate.kind),
-        ),
+        key=_directive_candidate_sort_key,
     )
-    ignored: set[tuple[int, str]] = set()
+    ignored: set[_CandidateIdentity] = set()
     for row in sorted(ignore_next_rows):
-        target = next(
-            (
-                candidate
-                for candidate in selected
-                if candidate.boundary.line_number > row
-            ),
-            None,
-        )
+        target = _next_directive_candidate(selected, row)
         if target is not None:
-            ignored.add((target.boundary.index, target.boundary.indentation))
+            ignored.add(_candidate_identity(target))
+        ####
+    ####
+    for row in sorted(ignore_next_block_rows):
+        target = _next_directive_candidate(selected, row)
+        if target is None:
+            continue
+        ####
+        for candidate in selected:
+            if _is_clause_candidate(target):
+                if not (
+                        target.boundary.line_number
+                        <= candidate.boundary.line_number
+                        <= target.block_end_line
+                ):
+                    continue
+                ####
+                if (
+                        _is_statement_candidate(candidate)
+                        and id(candidate.owner) == id(target.owner)
+                ):
+                    continue
+                ####
+                ignored.add(
+                    _candidate_identity(candidate)
+                )
+                continue
+            ####
+            owner: ast.AST | None = candidate.owner
+            while owner is not None:
+                if id(owner) == id(target.owner):
+                    ignored.add(
+                        _candidate_identity(candidate)
+                    )
+                    break
+                ####
+                owner = parents.get(id(owner))
+            ####
         ####
     ####
     return ignored
@@ -657,7 +765,7 @@ def _boundary_candidates(tree: ast.AST, lines: Sequence[str]) -> list[_BoundaryC
     for match in (node for node in nodes if isinstance(node, ast.Match)):
         match_depth = _candidate_depth(match, parents)
         case_facts = _candidate_facts(match, parents, lines, match_depth + 1)
-        for case in match.cases:
+        for index, case in enumerate(match.cases):
             candidate = _case_candidate(
                 case,
                 lines,
@@ -665,6 +773,7 @@ def _boundary_candidates(tree: ast.AST, lines: Sequence[str]) -> list[_BoundaryC
                 inline_headers,
                 match_depth + 1,
                 case_facts,
+                index == len(match.cases) - 1,
             )
             if candidate is not None:
                 candidates.append(candidate)
@@ -1036,21 +1145,23 @@ def explain_source(
         policy=policy,
     )
     explanations: list[BoundaryExplanation] = []
-    selected: dict[tuple[int, str], BoundaryKind] = {}
+    selected: dict[_PhysicalBoundaryIdentity, BoundaryKind] = {}
     candidates = _boundary_candidates(tree, lines)
-    ignored = _ignored_candidate_identities(candidates, lines, effective_policy)
+    ignored = _ignored_candidate_identities(
+        candidates, lines, effective_policy, _parents(tree)
+    )
     for candidate in candidates:
         decision = _candidate_decision(candidate, effective_policy)
-        identity = (candidate.boundary.index, candidate.boundary.indentation)
-        if identity in ignored:
+        physical_identity = _physical_boundary_identity(candidate)
+        if _candidate_identity(candidate) in ignored:
             decision = PolicyDecision(False, "ignored by source directive")
         ####
-        will_mark = decision.allowed and identity not in selected
+        will_mark = decision.allowed and physical_identity not in selected
         reason = decision.reason
         if decision.allowed and not will_mark:
-            reason = f"duplicates selected {selected[identity]} boundary"
+            reason = f"duplicates selected {selected[physical_identity]} boundary"
         elif will_mark:
-            selected[identity] = candidate.kind
+            selected[physical_identity] = candidate.kind
         ####
         explanations.append(
             BoundaryExplanation(
@@ -1081,7 +1192,7 @@ def _prepare_source(
     clean_source = _without_markers(source, marker)
     tree = ast.parse(clean_source, filename=filename)
     lines = physical_lines(clean_source)
-    effective_policy = policy or classic_policy(mark_stubs=mark_stubs)
+    effective_policy = policy or statements_policy(mark_stubs=mark_stubs)
     if mark_stubs and policy is not None and policy.stub_policy == "skip":
         effective_policy = replace(policy, stub_policy="mark")
     ####
@@ -1174,8 +1285,13 @@ def _clause_boundary(
 ####
 
 
-def _compound_kind(node: ast.stmt) -> BoundaryKind:
+def _compound_kind(
+        node: ast.stmt, parents: Mapping[int, ast.AST]
+) -> BoundaryKind:
     if isinstance(node, FUNCTION_STATEMENTS):
+        if isinstance(parents.get(id(node)), ast.ClassDef):
+            return BoundaryKind.STATEMENT_METHOD
+        ####
         return BoundaryKind.STATEMENT_FUNCTION
     ####
     if isinstance(node, ast.ClassDef):
@@ -1335,7 +1451,9 @@ def _compound_candidate(
     end_line = node.end_lineno if node.end_lineno is not None else node.lineno
     depth = _candidate_depth(node, parents)
     return _BoundaryCandidate(
-        kind=_compound_kind(node),
+        owner=node,
+        block_end_line=end_line,
+        kind=_compound_kind(node, parents),
         boundary=boundary,
         span_lines=max(1, end_line - node.lineno + 1),
         suite_line_counts=tuple(_suite_line_count(suite) for suite in suites),
@@ -1357,13 +1475,19 @@ def _case_candidate(
         inline_headers: set[int],
         depth: int,
         facts: frozenset[str],
+        is_final_case: bool,
 ) -> _BoundaryCandidate | None:
     boundary = _match_case_boundary(case, lines, case_header_lines)
     if boundary is None or not case.body:
         return None
     ####
     end_line = case.body[-1].end_lineno or case.body[-1].lineno
+    case_facts: frozenset[str] = facts | (
+        frozenset[str](("final-case",)) if is_final_case else frozenset[str]()
+    )
     return _BoundaryCandidate(
+        owner=case,
+        block_end_line=end_line,
         kind=BoundaryKind.CLAUSE_MATCH_CASE,
         boundary=boundary,
         span_lines=max(1, end_line - boundary.line_number + 1),
@@ -1371,7 +1495,7 @@ def _case_candidate(
         suite_statement_counts=(len(case.body),),
         clause_count=1,
         depth=depth,
-        facts=facts,
+        facts=case_facts,
         inline_suite=case.body[0].lineno in inline_headers,
     )
 ####
@@ -1408,6 +1532,7 @@ def _clause_header_line(
 
 def _clause_candidate(
         kind: BoundaryKind,
+        owner: ast.AST,
         suite: Sequence[ast.stmt],
         lines: Sequence[str],
         header_line: int,
@@ -1418,6 +1543,8 @@ def _clause_candidate(
     boundary = _clause_boundary(suite, lines, header_line)
     end_line = suite[-1].end_lineno or suite[-1].lineno
     return _BoundaryCandidate(
+        owner=owner,
+        block_end_line=end_line,
         kind=kind,
         boundary=boundary,
         span_lines=max(1, end_line - header_line + 1),
@@ -1443,6 +1570,7 @@ def _if_clause_candidates(
     candidates = [
         _clause_candidate(
             BoundaryKind.CLAUSE_IF_BODY,
+            node,
             node.body,
             lines,
             node.lineno,
@@ -1457,6 +1585,7 @@ def _if_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_IF_ELIF,
+                node,
                 current.body,
                 lines,
                 current.lineno,
@@ -1470,6 +1599,7 @@ def _if_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_IF_ELSE,
+                node,
                 current.orelse,
                 lines,
                 _clause_header_line("else", current.orelse, node, lines, headers),
@@ -1500,6 +1630,7 @@ def _loop_clause_candidates(
     candidates = [
         _clause_candidate(
             body_kind,
+            node,
             node.body,
             lines,
             node.lineno,
@@ -1512,6 +1643,7 @@ def _loop_clause_candidates(
         candidates.append(
             _clause_candidate(
                 else_kind,
+                node,
                 node.orelse,
                 lines,
                 _clause_header_line("else", node.orelse, node, lines, headers),
@@ -1537,6 +1669,7 @@ def _try_clause_candidates(
     candidates = [
         _clause_candidate(
             BoundaryKind.CLAUSE_TRY_BODY,
+            node,
             node.body,
             lines,
             node.lineno,
@@ -1549,6 +1682,7 @@ def _try_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_TRY_EXCEPT,
+                node,
                 handler.body,
                 lines,
                 _clause_header_line("except", handler.body, node, lines, headers),
@@ -1562,6 +1696,7 @@ def _try_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_TRY_ELSE,
+                node,
                 node.orelse,
                 lines,
                 _clause_header_line("else", node.orelse, node, lines, headers),
@@ -1575,6 +1710,7 @@ def _try_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_TRY_FINALLY,
+                node,
                 node.finalbody,
                 lines,
                 _clause_header_line("finally", node.finalbody, node, lines, headers),

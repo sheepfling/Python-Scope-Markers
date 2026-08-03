@@ -25,6 +25,7 @@ class BoundaryKind(StrEnum):
     """A supported kind of marker boundary."""
 
     STATEMENT_FUNCTION = "statement.function"
+    STATEMENT_METHOD = "statement.method"
     STATEMENT_CLASS = "statement.class"
     STATEMENT_IF = "statement.if"
     STATEMENT_FOR = "statement.for"
@@ -55,21 +56,30 @@ def _empty_boundary_kind_set() -> frozenset[BoundaryKind]:
 ALL_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     kind for kind in BoundaryKind
 )
-STATEMENT_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+COMPLETE_STATEMENT_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("statement.")
 )
-CLASSIC_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
-    (*STATEMENT_BOUNDARY_KINDS, BoundaryKind.CLAUSE_MATCH_CASE)
+STATEMENTS_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+    (*COMPLETE_STATEMENT_BOUNDARY_KINDS, BoundaryKind.CLAUSE_MATCH_CASE)
+)
+DEFINITION_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+    {
+        BoundaryKind.STATEMENT_FUNCTION,
+        BoundaryKind.STATEMENT_METHOD,
+        BoundaryKind.STATEMENT_CLASS,
+    }
+)
+LOGIC_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = (
+    STATEMENTS_BOUNDARY_KINDS - DEFINITION_BOUNDARY_KINDS
 )
 
 SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
     {
         "all": ALL_BOUNDARY_KINDS,
-        "classic": CLASSIC_BOUNDARY_KINDS,
-        "definitions": frozenset(
-            {BoundaryKind.STATEMENT_FUNCTION, BoundaryKind.STATEMENT_CLASS}
-        ),
-        "statements": STATEMENT_BOUNDARY_KINDS,
+        "complete-statements": COMPLETE_STATEMENT_BOUNDARY_KINDS,
+        "definitions": DEFINITION_BOUNDARY_KINDS,
+        "logic": LOGIC_BOUNDARY_KINDS,
+        "statements": STATEMENTS_BOUNDARY_KINDS,
         "clauses": frozenset(
             kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("clause.")
         ),
@@ -98,11 +108,12 @@ PRESETS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
     {
         "none": frozenset(),
         "definitions": SELECTOR_GROUPS["definitions"],
+        "logic": SELECTOR_GROUPS["logic"],
         "statements": SELECTOR_GROUPS["statements"],
-        "classic": CLASSIC_BOUNDARY_KINDS,
         "all": ALL_BOUNDARY_KINDS,
     }
 )
+FINAL_CASE_ONLY_PRESETS: Final[frozenset[str]] = frozenset({"logic", "statements"})
 
 _GENERIC_PREDICATES: Final = frozenset(
     {"nested", "module-level", "class-level", "function-level", "stub"}
@@ -200,6 +211,7 @@ class MarkerPolicy:
     rules: Mapping[BoundaryKind, RuleOverride] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    final_case_only: bool = False
     selector_extensions: frozenset[BoundaryKind] = field(
         default_factory=_empty_boundary_kind_set, repr=False, compare=False
     )
@@ -247,6 +259,13 @@ class MarkerPolicy:
         """Explain whether one fully analyzed candidate should be rendered."""
         if kind not in self.selected:
             return PolicyDecision(False, "selector is not enabled")
+        ####
+        if (
+                kind == BoundaryKind.CLAUSE_MATCH_CASE
+                and self.final_case_only
+                and "final-case" not in facts
+        ):
+            return PolicyDecision(False, "only the final match case is selected")
         ####
         rule = self.rules.get(kind, RuleOverride())
         stub_policy = rule.stub_policy or self.stub_policy
@@ -316,16 +335,75 @@ class _PolicyConfiguration:
 ####
 
 
+@dataclass(frozen=True, slots=True)
+class _SelectionState:
+    """The atomic result of applying preset and selector settings."""
+
+    selected: frozenset[BoundaryKind]
+    selector_extensions: frozenset[BoundaryKind]
+    selector_exclusions: frozenset[BoundaryKind]
+    final_case_only: bool
+####
+
+
 def _effective(override: _Setting | None, default: _Setting) -> _Setting:
     return default if override is None else override
 ####
 
 
-def classic_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
-    """Return the compatibility policy that reproduces legacy formatting."""
+def statements_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
+    """Return the recommended policy for complete statements and final cases."""
     return MarkerPolicy(
-        selected=CLASSIC_BOUNDARY_KINDS,
+        selected=STATEMENTS_BOUNDARY_KINDS,
         stub_policy="mark" if mark_stubs else "skip",
+        final_case_only=True,
+    )
+####
+
+
+def _selection_state(
+        policy: MarkerPolicy,
+        *,
+        preset: str | None,
+        select: tuple[str, ...] | None,
+        extend_select: tuple[str, ...],
+        ignore: tuple[str, ...],
+        reset_preset_arithmetic: bool,
+        reset_select_arithmetic: bool,
+) -> _SelectionState:
+    """Resolve selector layers and preset-only constraints as one transition."""
+    base_selection = policy.selected
+    extensions = policy.selector_extensions
+    exclusions = policy.selector_exclusions
+    final_case_only = policy.final_case_only
+    if preset is not None:
+        if preset not in PRESETS:
+            raise PolicyError(
+                f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}"
+            )
+        ####
+        base_selection = PRESETS[preset]
+        final_case_only = preset in FINAL_CASE_ONLY_PRESETS
+        if reset_preset_arithmetic:
+            extensions = frozenset[BoundaryKind]()
+            exclusions = frozenset[BoundaryKind]()
+        ####
+    ####
+    if select is not None:
+        base_selection = expand_selectors(select)
+        final_case_only = False
+        if reset_select_arithmetic:
+            extensions = frozenset[BoundaryKind]()
+            exclusions = frozenset[BoundaryKind]()
+        ####
+    ####
+    extensions |= expand_selectors(extend_select)
+    exclusions |= expand_selectors(ignore)
+    return _SelectionState(
+        selected=(base_selection | extensions) - exclusions,
+        selector_extensions=extensions,
+        selector_exclusions=exclusions,
+        final_case_only=final_case_only,
     )
 ####
 
@@ -385,7 +463,7 @@ def policy_from_mapping(settings: Mapping[str, object]) -> MarkerPolicy:
     """Build a strict policy from a ``[tool.scope-markers]`` TOML table."""
     _validate_settings(settings, _CONFIG_KEYS, "scope-markers setting")
     _per_file_overrides(settings)
-    return _apply_settings(classic_policy(), settings)
+    return _apply_settings(statements_policy(), settings)
 ####
 
 
@@ -406,29 +484,22 @@ def policy_with_cli_overrides(
         mark_stubs: bool = False,
 ) -> MarkerPolicy:
     """Apply command-line policy values after TOML settings."""
-    extensions: frozenset[BoundaryKind] = policy.selector_extensions
-    exclusions: frozenset[BoundaryKind] = policy.selector_exclusions
-    base_selection = policy.selected
-    if preset is not None:
-        if preset not in PRESETS:
-            raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
-        ####
-        base_selection = PRESETS[preset]
-        extensions = frozenset[BoundaryKind]()
-        exclusions = frozenset[BoundaryKind]()
-    ####
-    if select:
-        base_selection = expand_selectors(selector_values(select))
-        extensions = frozenset[BoundaryKind]()
-        exclusions = frozenset[BoundaryKind]()
-    ####
-    extensions |= expand_selectors(selector_values(extend_select))
-    exclusions |= expand_selectors(selector_values(ignore))
-    selected = (base_selection | extensions) - exclusions
+    selection = _selection_state(
+        policy,
+        preset=preset,
+        select=selector_values(select) if select else None,
+        extend_select=selector_values(extend_select),
+        ignore=selector_values(ignore),
+        reset_preset_arithmetic=True,
+        reset_select_arithmetic=True,
+    )
+    rules = dict(policy.rules)
     values: dict[str, object] = {
-        "selected": selected,
-        "selector_extensions": extensions,
-        "selector_exclusions": exclusions,
+        "selected": selection.selected,
+        "selector_extensions": selection.selector_extensions,
+        "selector_exclusions": selection.selector_exclusions,
+        "rules": MappingProxyType(rules),
+        "final_case_only": selection.final_case_only,
     }
     for key, value in (
             ("skip_inline_suites", skip_inline_suites),
@@ -453,7 +524,7 @@ def policy_with_cli_overrides(
 
 
 def load_policy(config: Path | None) -> MarkerPolicy:
-    """Load one explicit TOML configuration file or return the classic policy."""
+    """Load one explicit TOML configuration file or return the statements policy."""
     return _load_configuration(config).policy
 ####
 
@@ -473,7 +544,7 @@ def resolve_policy(config: Path | None, path: Path) -> MarkerPolicy:
 
 def _load_configuration(config: Path | None) -> _PolicyConfiguration:
     if config is None:
-        return _PolicyConfiguration(classic_policy(), Path.cwd(), ())
+        return _PolicyConfiguration(statements_policy(), Path.cwd(), ())
     ####
     try:
         with config.open("rb") as stream:
@@ -486,14 +557,14 @@ def _load_configuration(config: Path | None) -> _PolicyConfiguration:
         project = _table(document, f"{display_path(config)} root")
         tool = project.get("tool")
         if tool is None:
-            return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
+            return _PolicyConfiguration(statements_policy(), config.resolve().parent, ())
         ####
         settings = _table(tool, f"{display_path(config)} tool table").get("scope-markers")
     else:
         settings = document
     ####
     if settings is None:
-        return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
+        return _PolicyConfiguration(statements_policy(), config.resolve().parent, ())
     ####
     try:
         table = _table(settings, f"{display_path(config)} scope-markers settings")
@@ -509,35 +580,36 @@ def _load_configuration(config: Path | None) -> _PolicyConfiguration:
 
 
 def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> MarkerPolicy:
-    extensions = policy.selector_extensions
-    exclusions = policy.selector_exclusions
-    base_selection = policy.selected
-    if "preset" in settings:
-        preset = _string(settings, "preset", "classic")
-        if preset not in PRESETS:
-            raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
-        ####
-        base_selection = PRESETS[preset]
-    ####
-    if "select" in settings:
-        base_selection = expand_selectors(_string_array(settings, "select"))
-    ####
-    extensions |= expand_selectors(_string_array(settings, "extend-select"))
-    exclusions |= expand_selectors(_string_array(settings, "ignore"))
-    selected = (base_selection | extensions) - exclusions
+    selection = _selection_state(
+        policy,
+        preset=(
+            _string(settings, "preset", "statements")
+            if "preset" in settings
+            else None
+        ),
+        select=(
+            _string_array(settings, "select") if "select" in settings else None
+        ),
+        extend_select=_string_array(settings, "extend-select"),
+        ignore=_string_array(settings, "ignore"),
+        reset_preset_arithmetic=False,
+        reset_select_arithmetic=False,
+    )
+    rules = dict(policy.rules)
     policy = _replace_filters(
         replace(
             policy,
-            selected=selected,
-            selector_extensions=extensions,
-            selector_exclusions=exclusions,
+            selected=selection.selected,
+            selector_extensions=selection.selector_extensions,
+            selector_exclusions=selection.selector_exclusions,
+            rules=MappingProxyType(rules),
+            final_case_only=selection.final_case_only,
         ),
         settings,
     )
     if "rules" not in settings:
         return policy
     ####
-    rules = dict(policy.rules)
     rules.update(_rules_from_mapping(settings["rules"]))
     return replace(policy, rules=MappingProxyType(rules))
 ####

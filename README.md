@@ -1,6 +1,5 @@
 # Scope Markers
 
-[![CI][ci-badge]][ci]
 [![Python 3.11-3.14][python-badge]][python]
 [![Runtime dependencies: none][deps-badge]][pyproject]
 
@@ -15,6 +14,8 @@ It can also format Python code inside Markdown fences.
 
 Scope Markers is deterministic, idempotent, reversible with `--strip`, and guarded by an
 AST-equivalence check. Its markers are ordinary Python comments and have no runtime effect.
+The recommended default is the `statements` preset: it closes complete compound statements
+and adds one marker for the final `match` case before the enclosing `match` marker.
 
 ## What it does
 
@@ -44,6 +45,12 @@ A marker's indentation identifies the statement it closes. Unlike `# end if` or
 Markers removes recognized managed markers and regenerates their canonical placement from
 parsed source.
 
+`####` is the default marker style. For compatibility with an existing file, a standalone
+run of two or more hash characters such as `###` or `#####` establishes that file's local
+style, which formatting preserves. Hash comments containing text, such as `### section`,
+are ordinary comments. Mixing standalone styles in one file is rejected so the boundary
+convention remains unambiguous.
+
 This is a project convention, not a claim about universal Python style. Use it where
 visible closing boundaries make code easier for your team to scan.
 
@@ -51,27 +58,26 @@ visible closing boundaries make code easier for your team to scan.
 
 Scope Markers requires Python 3.11 or newer.
 
-Install directly from the repository with `uv`:
+Install the published package with `uv`:
 
 ```bash
-uv tool install git+https://github.com/sheepfling/Python-Scope-Markers.git
+uv tool install scope-markers
 ```
 
 Or with `pipx`:
 
 ```bash
-pipx install git+https://github.com/sheepfling/Python-Scope-Markers.git
+pipx install scope-markers
 ```
 
 For a one-off invocation:
 
 ```bash
-uvx --from git+https://github.com/sheepfling/Python-Scope-Markers.git \
-    scope-markers --diff .
+uvx scope-markers --diff .
 ```
 
-From a cloned checkout, use `uv tool install .`, `pipx install .`, or
-`python -m pip install -e .` inside a virtual environment.
+From a local checkout, change into its directory and use `uv tool install .`,
+`pipx install .`, or `python -m pip install -e .` inside a virtual environment.
 
 The installed command and module entry point are equivalent:
 
@@ -120,16 +126,44 @@ The built-in presets cover the common policies:
 |---|---|
 | `none` | No generated markers |
 | `definitions` | Complete functions and classes |
-| `statements` | Every complete compound statement, without internal clauses |
-| `classic` | Complete compound statements plus every `match case` |
+| `logic` | Complete control-flow statements plus the final `match case` |
+| `statements` (recommended) | Complete compound statements plus the final `match case` |
 | `all` | Every supported statement and clause boundary |
 
-`classic` is the default and preserves the original Scope Markers convention.
+`statements` is the default and recommended preset for a clear, low-noise boundary
+convention. Use `definitions` when only functions, methods, and classes should be closed;
+use `logic` when definitions should remain untouched but control-flow scopes should be
+closed. Use `all` when you also want markers after intermediate branches and every `match`
+case.
+
+For the same source, the tiers differ like this:
+
+```text
+definitions: closes functions, methods, and classes
+logic:       closes if/else, loops, try blocks, match, and the final case
+statements:  definitions + logic (recommended)
+all:         statements + every intermediate clause and match case
+```
+
+Example source:
+
+````text
+def load(value):
+    if value:
+        return value
+    else:
+        return None
+````
+
+`definitions` adds one marker after the function. `logic` adds one marker after the
+`if`/`else` chain. `statements` adds both. `all` also adds a marker after each selected
+branch when there are intermediate clauses.
 
 ```bash
 scope-markers --preset definitions --fix src
+scope-markers --preset logic --fix src
 scope-markers --preset statements --fix src
-scope-markers --preset classic --ignore clause.match.case --fix src
+scope-markers --preset statements --ignore clause.match.case --fix src
 ```
 
 ## Marker policy
@@ -146,36 +180,37 @@ This avoids a separate boolean option for every Python statement form.
 
 `statement.*` selectors close a complete compound statement:
 
-| Selector | Boundary |
-|---|---|
-| `statement.function` | Complete `def` or `async def` |
-| `statement.class` | Complete `class` |
-| `statement.if` | Complete `if` / `elif` / `else` chain |
-| `statement.for` | Complete `for` or `async for`, including `else` |
-| `statement.while` | Complete `while`, including `else` |
-| `statement.with` | Complete `with` or `async with` |
-| `statement.try` | Complete `try`, handlers, `else`, and `finally` |
-| `statement.match` | Complete `match` |
+| Selector             | Boundary                                        |
+|----------------------|-------------------------------------------------|
+| `statement.function` | Complete standalone or nested `def` / `async def` |
+| `statement.method`   | Complete `def` or `async def` directly in a class |
+| `statement.class`    | Complete `class`                                |
+| `statement.if`       | Complete `if` / `elif` / `else` chain           |
+| `statement.for`      | Complete `for` or `async for`, including `else` |
+| `statement.while`    | Complete `while`, including `else`              |
+| `statement.with`     | Complete `with` or `async with`                 |
+| `statement.try`      | Complete `try`, handlers, `else`, and `finally` |
+| `statement.match`    | Complete `match`                                |
 
 `clause.*` selectors close one suite within a compound statement:
 
-| Selector | Boundary |
-|---|---|
-| `clause.if.body` | Initial `if` suite |
-| `clause.if.elif` | Each `elif` suite |
-| `clause.if.else` | Final `else` suite |
-| `clause.for.body` | Primary `for` or `async for` suite |
-| `clause.for.else` | Loop `else` suite |
-| `clause.while.body` | Primary `while` suite |
-| `clause.while.else` | Loop `else` suite |
-| `clause.try.body` | Initial `try` suite |
-| `clause.try.except` | Each `except` or `except*` suite |
-| `clause.try.else` | `try`-`else` suite |
-| `clause.try.finally` | `finally` suite |
-| `clause.match.case` | Each `case` suite |
+| Selector             | Boundary                           |
+|----------------------|------------------------------------|
+| `clause.if.body`     | Initial `if` suite                 |
+| `clause.if.elif`     | Each `elif` suite                  |
+| `clause.if.else`     | Final `else` suite                 |
+| `clause.for.body`    | Primary `for` or `async for` suite |
+| `clause.for.else`    | Loop `else` suite                  |
+| `clause.while.body`  | Primary `while` suite              |
+| `clause.while.else`  | Loop `else` suite                  |
+| `clause.try.body`    | Initial `try` suite                |
+| `clause.try.except`  | Each `except` or `except*` suite   |
+| `clause.try.else`    | `try`-`else` suite                 |
+| `clause.try.finally` | `finally` suite                    |
+| `clause.match.case`  | Each `case` suite                  |
 
 Selectors may be exact names, groups, or namespace prefixes. The groups are
-`definitions`, `statements`, `clauses`, `conditionals`, `loops`, `contexts`,
+`complete-statements`, `definitions`, `logic`, `statements`, `clauses`, `conditionals`, `loops`, `contexts`,
 `exceptions`, and `patterns`.
 
 For example, `clause.if` expands to every `clause.if.*` selector:
@@ -214,16 +249,16 @@ Unknown settings, selectors, predicates, and values are errors rather than silen
 
 Shape filters are objective and independent:
 
-| Setting | Meaning |
-|---|---|
-| `skip-inline-suites` | Skip suites whose body begins on the header line |
-| `min-span-lines` | Minimum physical span from candidate header through its end |
-| `min-body-lines` | Minimum physical-line span of an owned suite |
-| `min-body-statements` | Minimum direct AST statements in an owned suite |
-| `min-clauses` | Minimum number of suites owned by the candidate |
-| `min-depth` | Minimum compound-statement nesting depth |
-| `max-depth` | Maximum compound-statement nesting depth |
-| `stub-policy` | `skip` or `mark` docstring-only and ellipsis-only functions |
+| Setting               | Meaning                                                     |
+|-----------------------|-------------------------------------------------------------|
+| `skip-inline-suites`  | Skip suites whose body begins on the header line            |
+| `min-span-lines`      | Minimum physical span from candidate header through its end |
+| `min-body-lines`      | Minimum physical-line span of an owned suite                |
+| `min-body-statements` | Minimum direct AST statements in an owned suite             |
+| `min-clauses`         | Minimum number of suites owned by the candidate             |
+| `min-depth`           | Minimum compound-statement nesting depth                    |
+| `max-depth`           | Maximum compound-statement nesting depth                    |
+| `stub-policy`         | `skip` or `mark` docstring-only and ellipsis-only functions |
 
 These filters answer different questions. A multiline call can occupy several physical
 lines while remaining one direct statement:
@@ -269,7 +304,7 @@ The complete accepted configuration shape is:
 
 ```toml
 [tool.scope-markers]
-preset = "classic"                  # none, definitions, statements, classic, all
+preset = "statements"               # none, definitions, logic, statements, all
 # select = ["definitions"]          # replace the preset selection
 extend-select = ["clause.if"]       # add selectors, groups, or prefixes
 ignore = ["clause.match.case"]      # subtract selectors
@@ -356,19 +391,21 @@ Definitions only:
 preset = "definitions"
 ```
 
+Logic scopes only:
+
+```toml
+[tool.scope-markers]
+preset = "logic"
+```
+
+This leaves function, method, and class bodies untouched while closing control-flow
+statements and the final case of each `match`.
+
 Complete statements without branch or case markers:
 
 ```toml
 [tool.scope-markers]
-preset = "statements"
-```
-
-Classic behavior without individual `case` markers:
-
-```toml
-[tool.scope-markers]
-preset = "classic"
-ignore = ["clause.match.case"]
+select = ["complete-statements"]
 ```
 
 Only final `else` suites:
@@ -485,6 +522,19 @@ class GeneratedContainer:
 ```
 
 This suppresses the class boundary but retains the function boundary.
+
+For a legacy class or function whose entire nested region should remain untouched, use
+`ignore-next-block` instead:
+
+```python
+# scope-markers: ignore-next-block
+class LegacyContainer:
+    def old_method(self) -> None:
+        pass
+```
+
+This suppresses the selected boundary and every nested boundary beneath it. The ordinary
+`ignore-next` directive remains the one-boundary form.
 
 There is currently no range-based `off` / `on` directive. Use a per-file policy for a
 generated or vendor tree.
@@ -719,14 +769,13 @@ def load(value: str) -> str:
 ####
 ```
 
-Under `classic`, `match` cases receive clause markers as well as the outer statement
-marker:
+Under `statements`, only the final `match` case receives a clause marker, followed by the
+outer statement marker:
 
 ```python
 match value:
     case 1:
         handle_one()
-    ####
     case _:
         handle_other()
     ####
@@ -809,23 +858,22 @@ fences. It does not replace the surrounding toolchain.
 ## Development
 
 ```bash
-git clone https://github.com/sheepfling/Python-Scope-Markers.git
-cd Python-Scope-Markers
+cd path/to/scope-markers
 uv sync --extra dev
-uv run python scripts/ci.py
+uv run python -m scripts.ci
 ```
 
 Apply safe cleanup steps before validation:
 
 ```bash
-uv run python scripts/ci.py --fix
+uv run python -m scripts.ci --fix
 ```
 
 Without `uv`:
 
 ```bash
 python -m pip install -e ".[dev]"
-python scripts/ci.py
+python -m scripts.ci
 ```
 
 The CI orchestrator runs the regression suite, diff-contract checks, Ruff, Flake8, Black
@@ -837,8 +885,6 @@ package version `0.1.0`, while untagged checkouts receive a PEP 440 development 
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
-[ci-badge]: https://github.com/sheepfling/Python-Scope-Markers/actions/workflows/ci.yml/badge.svg
-[ci]: https://github.com/sheepfling/Python-Scope-Markers/actions/workflows/ci.yml
 [deps-badge]: https://img.shields.io/badge/runtime%20dependencies-none-success
 [pyproject]: pyproject.toml
 [python-badge]: https://img.shields.io/badge/Python-3.11--3.14-3776AB?logo=python&logoColor=white

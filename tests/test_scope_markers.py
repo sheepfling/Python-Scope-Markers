@@ -216,7 +216,6 @@ def test_indent_width_handles_mixed_indentation_with_continuations_and_match_cas
         "    match value:\n"
         "      case 1:\n"
         "        return value\n"
-        "      ####\n"
         "      case _:\n"
         "        return 0\n"
         "      ####\n"
@@ -365,7 +364,6 @@ def test_indent_width_normalizes_comments_after_inline_match_cases() -> None:
         "match value:\n"
         "  case 1: pass\n"
         "    # Attached to the case suite.\n"
-        "  ####\n"
         "  case _: pass\n"
         "  ####\n"
         "####\n"
@@ -421,7 +419,7 @@ def test_all_compound_statement_families_are_supported(newline: str) -> None:
 
     formatted = scope_markers.format_source(source)
 
-    assert formatted.count("####") == 12
+    assert formatted.count("####") == 11
     assert scope_markers.format_source(formatted) == formatted
 ####
 
@@ -473,10 +471,8 @@ def test_match_cases_and_match_statement_are_closed_separately() -> None:
         "match value:\n"
         "    case 1:\n"
         "        pass\n"
-        "    ####\n"
         "    case 2 if ready:\n"
         "        pass\n"
-        "    ####\n"
         "    case _:\n"
         "        pass\n"
         "    ####\n"
@@ -656,7 +652,7 @@ def test_large_match_table_uses_stable_case_header_lookup() -> None:
 
     formatted = scope_markers.format_source(source)
 
-    assert formatted.count("####") == 1001
+    assert formatted.count("####") == 2
     assert scope_markers.format_source(formatted) == formatted
 ####
 
@@ -869,14 +865,14 @@ def test_extra_blank_lines_do_not_push_markers_to_the_end() -> None:
 def test_ci_command_list_is_explicit_and_uses_the_requested_python() -> None:
     assert ci.ci_commands("python311") == (
         ("python311", "-m", "pytest", "-q"),
-        ("python311", "scripts/check_diff.py"),
+        ("python311", "-m", "scripts.check_diff"),
         ("python311", "-m", "ruff", "check", "src", "scripts", "tests"),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
-        ("python311", "scripts/check_black.py"),
-        ("python311", "scripts/check_pyright.py"),
-        ("python311", "scripts/check_build.py"),
+        ("python311", "-m", "scripts.check_black"),
+        ("python311", "-m", "scripts.check_pyright"),
+        ("python311", "-m", "scripts.check_build"),
         ("python311", "-m", "scope_markers", "src", "scripts", "tests"),
-        ("python311", "scripts/check_rumdl.py"),
+        ("python311", "-m", "scripts.check_rumdl"),
     )
 ####
 
@@ -917,7 +913,7 @@ def test_check_diff_main_calls_the_bare_cr_check_without_git_argument(
 def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
     assert ci.ci_commands("python311", fix=True) == (
         ("python311", "-m", "pytest", "-q"),
-        ("python311", "scripts/check_diff.py"),
+        ("python311", "-m", "scripts.check_diff"),
         (
             "python311",
             "-m",
@@ -929,9 +925,9 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
             "tests",
         ),
         ("python311", "-m", "flake8", "src", "scripts", "tests"),
-        ("python311", "scripts/check_black.py"),
-        ("python311", "scripts/check_pyright.py"),
-        ("python311", "scripts/check_build.py"),
+        ("python311", "-m", "scripts.check_black"),
+        ("python311", "-m", "scripts.check_pyright"),
+        ("python311", "-m", "scripts.check_build"),
         (
             "python311",
             "-m",
@@ -941,7 +937,7 @@ def test_ci_fix_mode_adds_safe_formatter_fix_flags() -> None:
             "scripts",
             "tests",
         ),
-        ("python311", "scripts/check_rumdl.py", "--fix"),
+        ("python311", "-m", "scripts.check_rumdl", "--fix"),
     )
 ####
 
@@ -1004,7 +1000,7 @@ def test_ci_help_explains_validation_modes(capsys: pytest.CaptureFixture[str]) -
     assert exception.value.code == 0
     assert "same order as CI" in output
     assert "Ruff, scope-markers, and rumdl" in output
-    assert "python scripts/ci.py --fix" in output
+    assert "python -m scripts.ci --fix" in output
 ####
 
 
@@ -1262,7 +1258,7 @@ def test_existing_misplaced_and_duplicate_markers_are_canonicalized() -> None:
 
 def test_marker_like_comments_are_not_owned_by_the_formatter() -> None:
     source = (
-        "#####\n"
+        "##### heading\n"
         "#### explanation\n"
         "value = 1  # ####\n"
         "def example() -> None:\n"
@@ -1271,7 +1267,7 @@ def test_marker_like_comments_are_not_owned_by_the_formatter() -> None:
 
     formatted = scope_markers.format_source(source)
 
-    assert "#####\n" in formatted
+    assert "##### heading\n" in formatted
     assert "#### explanation\n" in formatted
     assert "value = 1  # ####\n" in formatted
     assert formatted.count("\n####\n") == 1
@@ -1317,10 +1313,237 @@ def test_ignore_next_skips_one_boundary_but_not_nested_scopes() -> None:
 ####
 
 
-def test_two_hash_marker_style_is_detected_and_preserved() -> None:
-    source = "def example() -> None:\n    pass\n##\n"
+def test_ignore_next_block_skips_a_boundary_and_all_nested_scopes() -> None:
+    source = (
+        "# scope-markers: ignore-next-block\n"
+        "@legacy\n"
+        "class LegacyContainer:\n"
+        "    def old_method(self) -> None:\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    def another_method(self) -> None:\n"
+        "        pass\n"
+        "def current() -> None:\n"
+        "    pass\n"
+    )
 
-    assert scope_markers.format_source(source) == "def example() -> None:\n    pass\n##\n"
+    formatted = scope_markers.format_source(source)
+
+    assert formatted == (
+        "# scope-markers: ignore-next-block\n"
+        "@legacy\n"
+        "class LegacyContainer:\n"
+        "    def old_method(self) -> None:\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    def another_method(self) -> None:\n"
+        "        pass\n"
+        "def current() -> None:\n"
+        "    pass\n"
+        "####\n"
+    )
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_recursive_directives_coexist_with_other_tool_directives(
+        newline: str,
+) -> None:
+    source = (
+        "# scope-markers: ignore-next-block\n"
+        "# noqa: E501\n"
+        "# pyright: ignore[reportUnusedClass] \n"
+        "# noinspection PyUnusedLocal\n"
+        "@legacy\n"
+        "class LegacyContainer:\n"
+        "    # noqa: D102\n"
+        "    def old_method(self) -> None:\n"
+        "        # pyright: ignore[reportUnreachable]\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    # noinspection PyMethodMayBeStatic\n"
+        "    def another_method(self) -> None:\n"
+        "        pass\n"
+        "def current() -> None:\n"
+        "    pass\n"
+    ).replace("\n", newline)
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted == source + f"####{newline}"
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
+@pytest.mark.parametrize(
+    ("prefix", "header", "suite"),
+    (
+        (
+            "if ready:\n    pass\n",
+            "else:",
+            "    def fallback() -> None:\n        pass\n",
+        ),
+        (
+            "try:\n    pass\n",
+            "except ValueError:",
+            "    def recover() -> None:\n        pass\n",
+        ),
+        (
+            "try:\n    pass\n",
+            "finally:",
+            "    def close() -> None:\n        pass\n",
+        ),
+    ),
+)
+def test_ignore_next_block_before_clause_keeps_enclosing_boundary(
+        prefix: str, header: str, suite: str
+) -> None:
+    source = prefix + (
+        "# scope-markers: ignore-next-block\n"
+        f"{header}\n"
+        f"{suite}"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    formatted = scope_markers.format_source(source, policy=policy)
+
+    assert "# scope-markers: ignore-next-block\n" in formatted
+    assert formatted.count("####") == 2
+####
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        (
+            "# scope-markers: ignore-next-block\n"
+            "if ready: work()\n"
+        ),
+        (
+            "# scope-markers: ignore-next-block\n"
+            "for item in items: consume(item)\n"
+        ),
+        (
+            "# scope-markers: ignore-next-block\n"
+            "while ready: work()\n"
+        ),
+        (
+            "# scope-markers: ignore-next-block\n"
+            "try: work()\n"
+            "except OSError: recover()\n"
+        ),
+    ),
+)
+def test_ignore_next_block_prefers_complete_statement_on_shared_header(
+        source: str,
+) -> None:
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    assert scope_markers.format_source(source, policy=policy) == source
+####
+
+
+def test_ignore_next_targets_complete_statement_on_shared_header() -> None:
+    source = "# scope-markers: ignore-next\nif ready: work()\n"
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    explanations = scope_markers.explain_source(source, policy=policy)
+
+    assert explanations[0].kind is api.BoundaryKind.STATEMENT_IF
+    assert explanations[0].reason == "ignored by source directive"
+    assert explanations[1].kind is api.BoundaryKind.CLAUSE_IF_BODY
+    assert explanations[1].will_mark is True
+####
+
+
+def test_ignore_next_clause_targets_logical_candidate_not_shared_marker() -> None:
+    source = (
+        "if ready:\n"
+        "    work()\n"
+        "# scope-markers: ignore-next\n"
+        "else:\n"
+        "    recover()\n"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    explanations = api.explain_source(source, policy=policy)
+
+    assert any(
+        explanation.kind is api.BoundaryKind.STATEMENT_IF
+        and explanation.will_mark
+        for explanation in explanations
+    )
+    assert any(
+        explanation.kind is api.BoundaryKind.CLAUSE_IF_ELSE
+        and not explanation.will_mark
+        and explanation.reason == "ignored by source directive"
+        for explanation in explanations
+    )
+####
+
+
+def test_ignore_next_block_case_preserves_match_boundary() -> None:
+    source = (
+        "match value:\n"
+        "    # scope-markers: ignore-next-block\n"
+        "    case 1:\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    case 2:\n"
+        "        pass\n"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    formatted = scope_markers.format_source(source, policy=policy)
+
+    assert formatted.count("####") == 2
+    assert formatted.endswith("    ####\n####\n")
+####
+
+
+def test_directive_like_comments_are_not_treated_as_scope_directives() -> None:
+    source = (
+        "# noqa: scope-markers: ignore-next-block\n"
+        "# pyright: ignore[scope-markers]\n"
+        "# noinspection scope-markers: ignore-next\n"
+        "def example() -> None:\n"
+        "    pass\n"
+    )
+
+    assert scope_markers.format_source(source).endswith("    pass\n####\n")
+####
+
+
+@pytest.mark.parametrize("marker", ("##", "###", "#####"))
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_local_hash_marker_style_is_detected_and_preserved(
+        marker: str, newline: str
+) -> None:
+    source = f"def example() -> None:\n    pass\n{marker}\n".replace(
+        "\n", newline
+    )
+
+    assert scope_markers.format_source(source) == source
+####
+
+
+@pytest.mark.parametrize("marker", ("###", "#####"))
+def test_strip_markers_removes_local_hash_marker_style(marker: str) -> None:
+    source = f"def example() -> None:\n    pass\n{marker}\nvalue = 1\n"
+
+    assert scope_markers.strip_markers(source) == (
+        "def example() -> None:\n    pass\nvalue = 1\n"
+    )
+####
+
+
+def test_hash_comment_with_text_is_not_a_marker_style() -> None:
+    source = "def example() -> None:\n    pass\n### section\n"
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.endswith("####\n### section\n")
 ####
 
 
@@ -2130,7 +2353,6 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
         "ScopeBoundary",
         "ScopeMarkersError",
         "__version__",
-        "classic_policy",
         "describe_policy",
         "discover_python_files",
         "expand_selectors",
@@ -2147,6 +2369,7 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
         "process_markdown_file",
         "python_files",
         "resolve_policy",
+        "statements_policy",
         "strip_file",
         "strip_markers",
     )
@@ -2193,19 +2416,26 @@ def test_marker_policy_can_select_existing_boundary_kinds_and_filter_shapes() ->
         "match value:\n"
         "    case 1:\n"
         "        handle()\n"
+        "    case _:\n"
+        "        fallback()\n"
     )
     definitions = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
-    statements = api.MarkerPolicy(selected=api.expand_selectors(("statements",)))
+    complete_statements = api.MarkerPolicy(
+        selected=api.expand_selectors(("complete-statements",))
+    )
     cases = api.MarkerPolicy(selected=api.expand_selectors(("clause.match.case",)))
-    classic = api.classic_policy()
+    statements = api.statements_policy()
+    all_boundaries = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
     nested = api.MarkerPolicy(
-        selected=api.expand_selectors(("statements",)), min_depth=1
+        selected=api.expand_selectors(("complete-statements",)), min_depth=1
     )
 
-    assert api.format_source(source) == api.format_source(source, policy=classic)
+    assert api.format_source(source) == api.format_source(source, policy=statements)
     assert api.format_source(source, policy=definitions).count("####") == 1
-    assert api.format_source(source, policy=statements).count("####") == 3
-    assert api.format_source(source, policy=cases).count("####") == 1
+    assert api.format_source(source, policy=complete_statements).count("####") == 3
+    assert api.format_source(source, policy=statements).count("####") == 4
+    assert api.format_source(source, policy=cases).count("####") == 2
+    assert api.format_source(source, policy=all_boundaries).count("####") == 5
     assert api.format_source(source, policy=nested).count("####") == 1
 ####
 
@@ -2343,7 +2573,10 @@ def test_policy_toml_is_strict_and_can_change_cli_output(
     )
     assert cli.main(["--config", str(config), "--quiet", str(source)]) == 0
     assert cli.main(["--config", str(config), "--show-settings", str(source)]) == 0
-    assert "select = [statement.class, statement.function]" in capsys.readouterr().out
+    assert (
+        "select = [statement.class, statement.function, statement.method]"
+        in capsys.readouterr().out
+    )
 
     config.write_text('select = ["statement.iff"]\n', encoding="utf-8")
     with pytest.raises(api.PolicyError, match="unknown selector"):

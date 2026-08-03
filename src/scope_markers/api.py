@@ -29,12 +29,12 @@ from ._policy import (
     MarkerPolicy,
     PolicyDecision,
     PolicyError,
-    classic_policy,
     describe_policy,
     expand_selectors,
     find_config,
     load_policy,
     resolve_policy,
+    statements_policy,
 )
 from ._types import BoundaryExplanation, FileInspection, ScopeBoundary
 
@@ -48,7 +48,6 @@ __all__ = (
     "ScopeBoundary",
     "ScopeMarkersError",
     "__version__",
-    "classic_policy",
     "describe_policy",
     "discover_python_files",
     "expand_selectors",
@@ -65,6 +64,7 @@ __all__ = (
     "process_markdown_file",
     "python_files",
     "resolve_policy",
+    "statements_policy",
     "strip_file",
     "strip_markers",
 )

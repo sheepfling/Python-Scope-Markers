@@ -9,6 +9,8 @@ from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from scripts._project import temporary_prefix
+
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOTS = (ROOT / "src", ROOT / "scripts", ROOT / "tests")
 MARKERS = {"##", "####"}
@@ -52,7 +54,7 @@ def _copy_unmarked_sources(destination: Path) -> None:
 
 def main() -> int:
     """Verify Black can format and recheck a marker-free temporary source tree."""
-    with TemporaryDirectory(prefix="scope-markers-black-") as directory:
+    with TemporaryDirectory(prefix=temporary_prefix("black")) as directory:
         destination = Path(directory)
         _copy_unmarked_sources(destination)
         format_command = [
