@@ -43,12 +43,13 @@ def _fence_parts(line: str) -> tuple[str, str, str] | None:
 ####
 
 
-def _is_fence_closing(line: str, indentation: str, fence: str) -> bool:
+def _is_fence_closing(line: str, fence: str) -> bool:
     body = line.rstrip("\r\n")
-    if not body.startswith(indentation):
+    indentation_length = len(body) - len(body.lstrip(" "))
+    if indentation_length > 3:
         return False
     ####
-    remainder = body[len(indentation):]
+    remainder = body[indentation_length:]
     if not remainder.startswith(fence[0] * len(fence)):
         return False
     ####
@@ -129,7 +130,7 @@ def format_markdown_source(
         indentation, fence, info = parts
         closing_index = index + 1
         while closing_index < len(lines) and not _is_fence_closing(
-                lines[closing_index], indentation, fence
+                lines[closing_index], fence
         ):
             closing_index += 1
         ####

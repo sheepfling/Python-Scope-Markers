@@ -2339,6 +2339,30 @@ def test_explain_source_reports_filter_and_duplicate_decisions() -> None:
 ####
 
 
+def test_match_case_rules_inherit_owning_match_facts(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(
+        'select = ["clause.match.case"]\n'
+        '\n'
+        '[rules."clause.match.case"]\n'
+        'require = ["function-level", "nested"]\n',
+        encoding="utf-8",
+    )
+    source = (
+        "def outer(value: object) -> None:\n"
+        "    match value:\n"
+        "        case 1:\n"
+        "            pass\n"
+    )
+
+    policy = api.load_policy(config)
+
+    assert api.format_source(source, policy=policy).endswith(
+        "            pass\n        ####\n"
+    )
+####
+
+
 def test_cli_explain_reports_resolved_policy_decisions(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

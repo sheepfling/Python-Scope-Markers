@@ -624,13 +624,16 @@ def _boundary_candidates(tree: ast.AST, lines: Sequence[str]) -> list[_BoundaryC
         )
     ####
     for match in (node for node in nodes if isinstance(node, ast.Match)):
+        match_depth = _candidate_depth(match, parents)
+        case_facts = _candidate_facts(match, parents, lines, match_depth + 1)
         for case in match.cases:
             candidate = _case_candidate(
                 case,
                 lines,
                 case_header_lines,
                 inline_headers,
-                _candidate_depth(match, parents) + 1,
+                match_depth + 1,
+                case_facts,
             )
             if candidate is not None:
                 candidates.append(candidate)
@@ -1311,6 +1314,7 @@ def _case_candidate(
         case_header_lines: Sequence[int],
         inline_headers: set[int],
         depth: int,
+        facts: frozenset[str],
 ) -> _BoundaryCandidate | None:
     boundary = _match_case_boundary(case, lines, case_header_lines)
     if boundary is None or not case.body:
@@ -1325,7 +1329,7 @@ def _case_candidate(
         suite_statement_counts=(len(case.body),),
         clause_count=1,
         depth=depth,
-        facts=frozenset(),
+        facts=facts,
         inline_suite=case.body[0].lineno in inline_headers,
     )
 ####

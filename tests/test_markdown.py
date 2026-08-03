@@ -87,6 +87,23 @@ def test_format_markdown_source_preserves_indented_fence_prefix() -> None:
 ####
 
 
+@pytest.mark.parametrize(
+    ("opening", "content", "closing"),
+    (
+        ("```python\n", "if ready:\n    pass\n", "  ```\n"),
+        ("  ```python\n", "  if ready:\n      pass\n", "```\n"),
+        ("```python\n", "if ready:\n    pass\n", "   ```\n"),
+    ),
+)
+def test_format_markdown_source_accepts_independently_indented_closing_fences(
+        opening: str, content: str, closing: str
+) -> None:
+    source = opening + content + closing
+
+    assert "####" in api.format_markdown_source(source)
+####
+
+
 @pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
 def test_format_markdown_source_preserves_fence_newlines(newline: str) -> None:
     source = newline.join(("```python", "if ready:", "    pass", "```", ""))
