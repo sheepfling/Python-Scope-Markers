@@ -15,7 +15,7 @@ It can also format Python code inside Markdown fences.
 
 Scope Markers is deterministic, idempotent, reversible with `--strip`, and guarded by an
 AST-equivalence check. Its markers are ordinary Python comments and have no runtime effect.
-The recommended default is the `classic` preset: it closes complete compound statements
+The recommended default is the `statements` preset: it closes complete compound statements
 and adds one marker for the final `match` case before the enclosing `match` marker.
 
 ## What it does
@@ -128,17 +128,17 @@ The built-in presets cover the common policies:
 |---|---|
 | `none` | No generated markers |
 | `definitions` | Complete functions and classes |
-| `statements` | Every complete compound statement, without internal clauses |
-| `classic` (recommended) | Complete compound statements plus the final `match case` |
+| `statements` (recommended) | Complete compound statements plus the final `match case` |
 | `all` | Every supported statement and clause boundary |
 
-`classic` is the default and recommended preset for a clear, low-noise boundary convention.
-Use `all` when you also want markers after intermediate branches and every `match` case.
+`statements` is the default and recommended preset for a clear, low-noise boundary
+convention. Use `all` when you also want markers after intermediate branches and every
+`match` case.
 
 ```bash
 scope-markers --preset definitions --fix src
 scope-markers --preset statements --fix src
-scope-markers --preset classic --ignore clause.match.case --fix src
+scope-markers --preset statements --ignore clause.match.case --fix src
 ```
 
 ## Marker policy
@@ -155,36 +155,36 @@ This avoids a separate boolean option for every Python statement form.
 
 `statement.*` selectors close a complete compound statement:
 
-| Selector | Boundary |
-|---|---|
-| `statement.function` | Complete `def` or `async def` |
-| `statement.class` | Complete `class` |
-| `statement.if` | Complete `if` / `elif` / `else` chain |
-| `statement.for` | Complete `for` or `async for`, including `else` |
-| `statement.while` | Complete `while`, including `else` |
-| `statement.with` | Complete `with` or `async with` |
-| `statement.try` | Complete `try`, handlers, `else`, and `finally` |
-| `statement.match` | Complete `match` |
+| Selector             | Boundary                                        |
+|----------------------|-------------------------------------------------|
+| `statement.function` | Complete `def` or `async def`                   |
+| `statement.class`    | Complete `class`                                |
+| `statement.if`       | Complete `if` / `elif` / `else` chain           |
+| `statement.for`      | Complete `for` or `async for`, including `else` |
+| `statement.while`    | Complete `while`, including `else`              |
+| `statement.with`     | Complete `with` or `async with`                 |
+| `statement.try`      | Complete `try`, handlers, `else`, and `finally` |
+| `statement.match`    | Complete `match`                                |
 
 `clause.*` selectors close one suite within a compound statement:
 
-| Selector | Boundary |
-|---|---|
-| `clause.if.body` | Initial `if` suite |
-| `clause.if.elif` | Each `elif` suite |
-| `clause.if.else` | Final `else` suite |
-| `clause.for.body` | Primary `for` or `async for` suite |
-| `clause.for.else` | Loop `else` suite |
-| `clause.while.body` | Primary `while` suite |
-| `clause.while.else` | Loop `else` suite |
-| `clause.try.body` | Initial `try` suite |
-| `clause.try.except` | Each `except` or `except*` suite |
-| `clause.try.else` | `try`-`else` suite |
-| `clause.try.finally` | `finally` suite |
-| `clause.match.case` | Each `case` suite |
+| Selector             | Boundary                           |
+|----------------------|------------------------------------|
+| `clause.if.body`     | Initial `if` suite                 |
+| `clause.if.elif`     | Each `elif` suite                  |
+| `clause.if.else`     | Final `else` suite                 |
+| `clause.for.body`    | Primary `for` or `async for` suite |
+| `clause.for.else`    | Loop `else` suite                  |
+| `clause.while.body`  | Primary `while` suite              |
+| `clause.while.else`  | Loop `else` suite                  |
+| `clause.try.body`    | Initial `try` suite                |
+| `clause.try.except`  | Each `except` or `except*` suite   |
+| `clause.try.else`    | `try`-`else` suite                 |
+| `clause.try.finally` | `finally` suite                    |
+| `clause.match.case`  | Each `case` suite                  |
 
 Selectors may be exact names, groups, or namespace prefixes. The groups are
-`definitions`, `statements`, `clauses`, `conditionals`, `loops`, `contexts`,
+`complete-statements`, `definitions`, `statements`, `clauses`, `conditionals`, `loops`, `contexts`,
 `exceptions`, and `patterns`.
 
 For example, `clause.if` expands to every `clause.if.*` selector:
@@ -223,16 +223,16 @@ Unknown settings, selectors, predicates, and values are errors rather than silen
 
 Shape filters are objective and independent:
 
-| Setting | Meaning |
-|---|---|
-| `skip-inline-suites` | Skip suites whose body begins on the header line |
-| `min-span-lines` | Minimum physical span from candidate header through its end |
-| `min-body-lines` | Minimum physical-line span of an owned suite |
-| `min-body-statements` | Minimum direct AST statements in an owned suite |
-| `min-clauses` | Minimum number of suites owned by the candidate |
-| `min-depth` | Minimum compound-statement nesting depth |
-| `max-depth` | Maximum compound-statement nesting depth |
-| `stub-policy` | `skip` or `mark` docstring-only and ellipsis-only functions |
+| Setting               | Meaning                                                     |
+|-----------------------|-------------------------------------------------------------|
+| `skip-inline-suites`  | Skip suites whose body begins on the header line            |
+| `min-span-lines`      | Minimum physical span from candidate header through its end |
+| `min-body-lines`      | Minimum physical-line span of an owned suite                |
+| `min-body-statements` | Minimum direct AST statements in an owned suite             |
+| `min-clauses`         | Minimum number of suites owned by the candidate             |
+| `min-depth`           | Minimum compound-statement nesting depth                    |
+| `max-depth`           | Maximum compound-statement nesting depth                    |
+| `stub-policy`         | `skip` or `mark` docstring-only and ellipsis-only functions |
 
 These filters answer different questions. A multiline call can occupy several physical
 lines while remaining one direct statement:
@@ -278,7 +278,7 @@ The complete accepted configuration shape is:
 
 ```toml
 [tool.scope-markers]
-preset = "classic"                  # none, definitions, statements, classic, all
+preset = "statements"               # none, definitions, statements, all
 # select = ["definitions"]          # replace the preset selection
 extend-select = ["clause.if"]       # add selectors, groups, or prefixes
 ignore = ["clause.match.case"]      # subtract selectors
@@ -369,15 +369,7 @@ Complete statements without branch or case markers:
 
 ```toml
 [tool.scope-markers]
-preset = "statements"
-```
-
-Classic behavior without individual `case` markers:
-
-```toml
-[tool.scope-markers]
-preset = "classic"
-ignore = ["clause.match.case"]
+select = ["complete-statements"]
 ```
 
 Only final `else` suites:
@@ -728,7 +720,7 @@ def load(value: str) -> str:
 ####
 ```
 
-Under `classic`, only the final `match` case receives a clause marker, followed by the
+Under `statements`, only the final `match` case receives a clause marker, followed by the
 outer statement marker:
 
 ```python

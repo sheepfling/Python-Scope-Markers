@@ -2151,7 +2151,6 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
         "ScopeBoundary",
         "ScopeMarkersError",
         "__version__",
-        "classic_policy",
         "describe_policy",
         "discover_python_files",
         "expand_selectors",
@@ -2168,6 +2167,7 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
         "process_markdown_file",
         "python_files",
         "resolve_policy",
+        "statements_policy",
         "strip_file",
         "strip_markers",
     )
@@ -2218,19 +2218,21 @@ def test_marker_policy_can_select_existing_boundary_kinds_and_filter_shapes() ->
         "        fallback()\n"
     )
     definitions = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
-    statements = api.MarkerPolicy(selected=api.expand_selectors(("statements",)))
+    complete_statements = api.MarkerPolicy(
+        selected=api.expand_selectors(("complete-statements",))
+    )
     cases = api.MarkerPolicy(selected=api.expand_selectors(("clause.match.case",)))
-    classic = api.classic_policy()
+    statements = api.statements_policy()
     all_boundaries = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
     nested = api.MarkerPolicy(
-        selected=api.expand_selectors(("statements",)), min_depth=1
+        selected=api.expand_selectors(("complete-statements",)), min_depth=1
     )
 
-    assert api.format_source(source) == api.format_source(source, policy=classic)
+    assert api.format_source(source) == api.format_source(source, policy=statements)
     assert api.format_source(source, policy=definitions).count("####") == 1
-    assert api.format_source(source, policy=statements).count("####") == 3
+    assert api.format_source(source, policy=complete_statements).count("####") == 3
+    assert api.format_source(source, policy=statements).count("####") == 4
     assert api.format_source(source, policy=cases).count("####") == 2
-    assert api.format_source(source, policy=classic).count("####") == 4
     assert api.format_source(source, policy=all_boundaries).count("####") == 5
     assert api.format_source(source, policy=nested).count("####") == 1
 ####

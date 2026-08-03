@@ -8,7 +8,7 @@ from scope_markers import api, cli
 
 
 @pytest.mark.parametrize(
-    "preset", ("none", "definitions", "statements", "classic", "all")
+    "preset", ("none", "definitions", "statements", "all")
 )
 def test_every_policy_preset_loads_and_expands(preset: str, tmp_path: Path) -> None:
     config = tmp_path / "scope-markers.toml"
@@ -22,6 +22,16 @@ def test_every_policy_preset_loads_and_expands(preset: str, tmp_path: Path) -> N
         else api.expand_selectors((preset,))
     )
     assert policy.selected == expected
+####
+
+
+def test_classic_preset_name_is_rejected_after_consolidation(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text('preset = "classic"\n', encoding="utf-8")
+
+    with pytest.raises(api.PolicyError, match="unknown preset 'classic'"):
+        api.load_policy(config)
+    ####
 ####
 
 
@@ -52,8 +62,8 @@ def test_all_preset_marks_every_match_case(tmp_path: Path) -> None:
             api.expand_selectors(("statement.match",)),
         ),
         (
-            'preset = "classic"\nignore = ["clause.match.case"]\n',
-            api.expand_selectors(("statements",)),
+            'preset = "statements"\nignore = ["clause.match.case"]\n',
+            api.expand_selectors(("complete-statements",)),
         ),
         (
             'select = ["statement.if"]\n'
@@ -191,7 +201,7 @@ def test_per_file_preset_preserves_accumulated_selector_arithmetic(tmp_path: Pat
     source = tmp_path / "src" / "example.py"
     source.parent.mkdir()
     config.write_text(
-        'preset = "classic"\n'
+        'preset = "statements"\n'
         'extend-select = ["clause.if.else"]\n'
         'ignore = ["statement.if"]\n'
         "\n"

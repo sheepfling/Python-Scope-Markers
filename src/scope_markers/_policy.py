@@ -55,21 +55,21 @@ def _empty_boundary_kind_set() -> frozenset[BoundaryKind]:
 ALL_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     kind for kind in BoundaryKind
 )
-STATEMENT_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+COMPLETE_STATEMENT_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("statement.")
 )
-CLASSIC_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
-    (*STATEMENT_BOUNDARY_KINDS, BoundaryKind.CLAUSE_MATCH_CASE)
+STATEMENTS_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+    (*COMPLETE_STATEMENT_BOUNDARY_KINDS, BoundaryKind.CLAUSE_MATCH_CASE)
 )
 
 SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
     {
         "all": ALL_BOUNDARY_KINDS,
-        "classic": CLASSIC_BOUNDARY_KINDS,
+        "complete-statements": COMPLETE_STATEMENT_BOUNDARY_KINDS,
         "definitions": frozenset(
             {BoundaryKind.STATEMENT_FUNCTION, BoundaryKind.STATEMENT_CLASS}
         ),
-        "statements": STATEMENT_BOUNDARY_KINDS,
+        "statements": STATEMENTS_BOUNDARY_KINDS,
         "clauses": frozenset(
             kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("clause.")
         ),
@@ -99,7 +99,6 @@ PRESETS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
         "none": frozenset(),
         "definitions": SELECTOR_GROUPS["definitions"],
         "statements": SELECTOR_GROUPS["statements"],
-        "classic": CLASSIC_BOUNDARY_KINDS,
         "all": ALL_BOUNDARY_KINDS,
     }
 )
@@ -175,7 +174,7 @@ class RuleOverride:
 ####
 
 
-_CLASSIC_CASE_RULE: Final = RuleOverride(require=frozenset(("final-case",)))
+_FINAL_CASE_RULE: Final = RuleOverride(require=frozenset(("final-case",)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,14 +323,14 @@ def _effective(override: _Setting | None, default: _Setting) -> _Setting:
 ####
 
 
-def classic_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
-    """Return the compatibility policy that reproduces legacy formatting."""
+def statements_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
+    """Return the recommended policy for complete statements and final cases."""
     return MarkerPolicy(
-        selected=CLASSIC_BOUNDARY_KINDS,
+        selected=STATEMENTS_BOUNDARY_KINDS,
         stub_policy="mark" if mark_stubs else "skip",
         rules=MappingProxyType(
             {
-                BoundaryKind.CLAUSE_MATCH_CASE: _CLASSIC_CASE_RULE,
+                BoundaryKind.CLAUSE_MATCH_CASE: _FINAL_CASE_RULE,
             }
         ),
     )
@@ -393,7 +392,7 @@ def policy_from_mapping(settings: Mapping[str, object]) -> MarkerPolicy:
     """Build a strict policy from a ``[tool.scope-markers]`` TOML table."""
     _validate_settings(settings, _CONFIG_KEYS, "scope-markers setting")
     _per_file_overrides(settings)
-    return _apply_settings(classic_policy(), settings)
+    return _apply_settings(statements_policy(), settings)
 ####
 
 
@@ -425,8 +424,8 @@ def policy_with_cli_overrides(
         base_selection = PRESETS[preset]
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
-        if preset == "classic":
-            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _CLASSIC_CASE_RULE
+        if preset == "statements":
+            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _FINAL_CASE_RULE
         else:
             rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
         ####
@@ -469,7 +468,7 @@ def policy_with_cli_overrides(
 
 
 def load_policy(config: Path | None) -> MarkerPolicy:
-    """Load one explicit TOML configuration file or return the classic policy."""
+    """Load one explicit TOML configuration file or return the statements policy."""
     return _load_configuration(config).policy
 ####
 
@@ -489,7 +488,7 @@ def resolve_policy(config: Path | None, path: Path) -> MarkerPolicy:
 
 def _load_configuration(config: Path | None) -> _PolicyConfiguration:
     if config is None:
-        return _PolicyConfiguration(classic_policy(), Path.cwd(), ())
+        return _PolicyConfiguration(statements_policy(), Path.cwd(), ())
     ####
     try:
         with config.open("rb") as stream:
@@ -502,14 +501,14 @@ def _load_configuration(config: Path | None) -> _PolicyConfiguration:
         project = _table(document, f"{display_path(config)} root")
         tool = project.get("tool")
         if tool is None:
-            return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
+            return _PolicyConfiguration(statements_policy(), config.resolve().parent, ())
         ####
         settings = _table(tool, f"{display_path(config)} tool table").get("scope-markers")
     else:
         settings = document
     ####
     if settings is None:
-        return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
+        return _PolicyConfiguration(statements_policy(), config.resolve().parent, ())
     ####
     try:
         table = _table(settings, f"{display_path(config)} scope-markers settings")
@@ -530,13 +529,13 @@ def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> Mar
     base_selection = policy.selected
     rules = dict(policy.rules)
     if "preset" in settings:
-        preset = _string(settings, "preset", "classic")
+        preset = _string(settings, "preset", "statements")
         if preset not in PRESETS:
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
         ####
         base_selection = PRESETS[preset]
-        if preset == "classic":
-            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _CLASSIC_CASE_RULE
+        if preset == "statements":
+            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _FINAL_CASE_RULE
         else:
             rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
         ####

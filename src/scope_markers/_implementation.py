@@ -18,7 +18,7 @@ from typing import Final, cast
 
 from ._errors import FILE_PROCESSING_ERRORS, ScopeMarkersError, format_error
 from ._paths import display_path
-from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, classic_policy
+from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, statements_policy
 from ._source import physical_lines, read_source, write_atomic
 from ._types import BoundaryExplanation, FileInspection, ScopeBoundary
 
@@ -1092,7 +1092,7 @@ def _prepare_source(
     clean_source = _without_markers(source, marker)
     tree = ast.parse(clean_source, filename=filename)
     lines = physical_lines(clean_source)
-    effective_policy = policy or classic_policy(mark_stubs=mark_stubs)
+    effective_policy = policy or statements_policy(mark_stubs=mark_stubs)
     if mark_stubs and policy is not None and policy.stub_policy == "skip":
         effective_policy = replace(policy, stub_policy="mark")
     ####
