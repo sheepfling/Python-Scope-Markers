@@ -375,7 +375,7 @@ def _selector_suggestion(selector: str) -> str | None:
 
 def selector_values(values: tuple[str, ...]) -> tuple[str, ...]:
     """Split repeatable command-line selector values on commas."""
-    return tuple(part.strip() for value in values for part in value.split(",") if part.strip())
+    return tuple(part.strip() for value in values for part in value.split(","))
 ####
 
 

@@ -2527,6 +2527,18 @@ def test_cli_policy_options_are_listed_and_rejected_while_stripping(
 ####
 
 
+@pytest.mark.parametrize("selector", ("", ",", "statement.if,", ",statement.if"))
+def test_cli_rejects_empty_selector_components(
+        selector: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "example.py"
+    source.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert cli.main(["--select", selector, "--quiet", str(source)]) == 2
+    assert "selector names must not be empty" in capsys.readouterr().err
+####
+
+
 @pytest.mark.parametrize(
     ("arguments", "message"),
     (
