@@ -193,6 +193,53 @@ patterns = ["tests/unit/**"]
 min-body-lines = 1
 ```
 
+The complete accepted configuration shape is shown below. The settings are
+strict: unknown keys, selectors, predicates, and values are errors rather than
+being silently ignored.
+
+```toml
+[tool.scope-markers]
+preset = "classic"                 # none, definitions, statements, classic, all
+# select = ["definitions"]          # replace the preset selection
+extend-select = ["clause.if"]       # add exact selectors, groups, or prefixes
+ignore = ["clause.match.case"]      # subtract selectors
+skip-inline-suites = true
+min-span-lines = 2
+min-body-lines = 2
+min-body-statements = 1
+min-clauses = 1
+min-depth = 0
+max-depth = 4
+stub-policy = "skip"                # skip or mark
+
+[tool.scope-markers.rules."statement.function"]
+min-body-lines = 1                   # override the global value for functions
+require = ["nested"]                 # predicates valid for this selector
+
+[tool.scope-markers.rules."statement.if"]
+require = ["has-else"]
+
+[tool.scope-markers.rules."statement.match"]
+require = ["multiple-cases"]
+
+[[tool.scope-markers.per-file]]
+patterns = ["generated/**", "vendor/**"]
+preset = "none"
+
+[[tool.scope-markers.per-file]]
+patterns = ["tests/**"]
+extend-select = ["clause.match.case"]
+ignore = ["statement.if"]
+```
+
+`select`, `extend-select`, and `ignore` accept exact selectors, selector
+groups, and namespace prefixes. `require` is available only inside a rule
+table. Global and per-rule filters are `skip-inline-suites`,
+`min-span-lines`, `min-body-lines`, `min-body-statements`, `min-clauses`,
+`min-depth`, `max-depth`, and `stub-policy`. A per-file table accepts those
+same settings plus `patterns`, `preset`, `select`, `extend-select`, `ignore`,
+and `rules`.
+
 The supported global filters are `skip-inline-suites`, `min-span-lines`,
 `min-body-lines`, `min-body-statements`, `min-clauses`, `min-depth`,
 `max-depth`, and `stub-policy` (`skip` or `mark`). A rule table inherits global
@@ -232,6 +279,118 @@ does nothing for `if` chains without an `else`.
 
 `--strip` removes every managed marker and therefore cannot be combined with
 policy-selection or shape-filter options.
+
+### Common policy recipes
+
+Use a preset when the whole project wants one simple convention:
+
+```toml
+# Functions and classes only.
+[tool.scope-markers]
+preset = "definitions"
+```
+
+```toml
+# Complete outer statements, without branch or case markers.
+[tool.scope-markers]
+preset = "statements"
+```
+
+```toml
+# Every supported boundary, including every clause and match case.
+[tool.scope-markers]
+preset = "all"
+```
+
+Use selectors when the policy is narrower:
+
+```toml
+# Only the final else suite of an if chain.
+[tool.scope-markers]
+select = ["clause.if.else"]
+```
+
+```toml
+# Keep the classic policy but remove case markers.
+[tool.scope-markers]
+preset = "classic"
+ignore = ["clause.match.case"]
+```
+
+Shape filters answer questions such as “how large must this scope be?”:
+
+```toml
+[tool.scope-markers]
+select = ["statement.if"]
+skip-inline-suites = true
+min-body-lines = 2
+min-body-statements = 2
+```
+
+The filters are independent: a multiline call is still one direct statement,
+while `min-body-statements = 2` requires two direct statements in an owned
+suite. Use `--show-settings PATH` and `--explain PATH` to inspect the resolved
+policy and each candidate decision.
+
+### Protecting files, scopes, and snippets
+
+To leave one file untouched by normal marker formatting, put this standalone
+comment on its first non-empty line:
+
+```python
+# scope-markers: off
+
+def generated_module_entry() -> None:
+    pass
+```
+
+To suppress only the next selected boundary, use `ignore-next` immediately
+before the scope. Nested scopes remain eligible:
+
+```python
+# scope-markers: ignore-next
+@generated
+class GeneratedContainer:
+    def useful_helper(self) -> None:
+        pass
+    ####
+```
+
+This suppresses the class boundary but still allows a marker after
+`useful_helper`. The directive is not name-based; for a particular function or
+class, place it before that definition. There is currently no range-based
+`off`/`on` directive, so use a per-file policy for a broad generated or vendor
+tree:
+
+```toml
+[[tool.scope-markers.per-file]]
+patterns = ["src/generated/**", "vendor/**"]
+preset = "none"
+```
+
+That policy exclusion differs from discovery exclusion. Use `--exclude` when
+the files should not be read at all:
+
+```bash
+scope-markers --exclude "src/generated/**" --exclude vendor src
+```
+
+For Markdown, opt out a Python fence with a first non-empty Python comment;
+keep directives out of the fence info string:
+
+````markdown
+```python
+# scope-markers: off
+def literal_example():
+    pass
+```
+````
+
+The equivalent `# no-scope-markers` and `# scope-markers=ignore` comments are
+accepted in Markdown fences. Non-Python fences and unterminated outer fences
+are preserved. `--strip` is an explicit removal operation and removes managed
+markers from ordinary Python files; an opted-out Markdown fence remains
+untouched.
 
 ## Discovery and common options
 
@@ -517,28 +676,6 @@ The formatter recognizes exact standalone `##` and `####` comments. If a file
 already contains one of those styles, newly inserted markers use it. Files with
 no existing markers default to `####`. If both styles appear as standalone
 markers, formatting fails instead of guessing.
-
-## Local suppression comments
-
-Use a standalone comment when a source file or one generated boundary should
-remain unmarked:
-
-```python
-# scope-markers: off
-```
-
-When this is the first non-empty line, the file is left unchanged. To skip
-only the next selected boundary, place this comment immediately before it:
-
-```python
-# scope-markers: ignore-next
-def generated_section() -> None:
-    pass
-```
-
-The nested scopes inside an ignored boundary remain eligible for markers.
-Only standalone comments are directives; inline comments and ordinary
-comments are preserved without affecting formatting.
 
 ## Exact policy
 

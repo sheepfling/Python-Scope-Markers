@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -2293,6 +2294,25 @@ def test_policy_toml_is_strict_and_can_change_cli_output(
     with pytest.raises(api.PolicyError, match="unknown selector"):
         api.load_policy(config)
     ####
+####
+
+
+def test_readme_complete_policy_example_is_accepted(tmp_path: Path) -> None:
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    match = re.search(
+        r"The complete accepted configuration shape.*?```toml\n(.*?)```",
+        readme,
+        re.DOTALL,
+    )
+    assert match is not None
+
+    config = tmp_path / "pyproject.toml"
+    config.write_text(match.group(1), encoding="utf-8")
+
+    policy = api.load_policy(config)
+
+    assert api.BoundaryKind.STATEMENT_FUNCTION in policy.selected
+    assert api.BoundaryKind.CLAUSE_IF_BODY in policy.selected
 ####
 
 
