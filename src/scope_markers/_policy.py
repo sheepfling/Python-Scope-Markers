@@ -1,0 +1,591 @@
+"""Marker-selection policy, selector expansion, and TOML configuration."""
+
+from __future__ import annotations
+
+import tomllib
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
+from pathlib import Path
+from types import MappingProxyType
+from typing import Final, TypeVar, cast
+
+_Setting = TypeVar("_Setting")
+
+
+class PolicyError(ValueError):
+    """Raised when marker-policy configuration is invalid."""
+####
+
+
+class BoundaryKind(StrEnum):
+    """A supported kind of marker boundary."""
+
+    STATEMENT_FUNCTION = "statement.function"
+    STATEMENT_CLASS = "statement.class"
+    STATEMENT_IF = "statement.if"
+    STATEMENT_FOR = "statement.for"
+    STATEMENT_WHILE = "statement.while"
+    STATEMENT_WITH = "statement.with"
+    STATEMENT_TRY = "statement.try"
+    STATEMENT_MATCH = "statement.match"
+    CLAUSE_MATCH_CASE = "clause.match.case"
+####
+
+
+ALL_BOUNDARY_KINDS: Final = frozenset(BoundaryKind)
+CLASSIC_BOUNDARY_KINDS: Final = ALL_BOUNDARY_KINDS
+
+SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
+    {
+        "all": ALL_BOUNDARY_KINDS,
+        "classic": CLASSIC_BOUNDARY_KINDS,
+        "definitions": frozenset(
+            {BoundaryKind.STATEMENT_FUNCTION, BoundaryKind.STATEMENT_CLASS}
+        ),
+        "statements": frozenset(
+            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("statement.")
+        ),
+        "clauses": frozenset(
+            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("clause.")
+        ),
+        "conditionals": frozenset({BoundaryKind.STATEMENT_IF}),
+        "loops": frozenset({BoundaryKind.STATEMENT_FOR, BoundaryKind.STATEMENT_WHILE}),
+        "contexts": frozenset({BoundaryKind.STATEMENT_WITH}),
+        "exceptions": frozenset({BoundaryKind.STATEMENT_TRY}),
+        "patterns": frozenset({BoundaryKind.STATEMENT_MATCH, BoundaryKind.CLAUSE_MATCH_CASE}),
+    }
+)
+
+PRESETS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
+    {
+        "none": frozenset(),
+        "definitions": SELECTOR_GROUPS["definitions"],
+        "statements": SELECTOR_GROUPS["statements"],
+        "classic": CLASSIC_BOUNDARY_KINDS,
+        "all": ALL_BOUNDARY_KINDS,
+    }
+)
+
+_GENERIC_PREDICATES: Final = frozenset(
+    {"nested", "module-level", "class-level", "function-level", "stub"}
+)
+_PREDICATES_BY_KIND: Final[Mapping[BoundaryKind, frozenset[str]]] = MappingProxyType(
+    {
+        BoundaryKind.STATEMENT_IF: _GENERIC_PREDICATES | {"has-elif", "has-else"},
+        BoundaryKind.STATEMENT_TRY: _GENERIC_PREDICATES
+        | {"multiple-handlers", "has-finally"},
+        BoundaryKind.STATEMENT_MATCH: _GENERIC_PREDICATES | {"multiple-cases"},
+        **{
+            kind: _GENERIC_PREDICATES
+            for kind in ALL_BOUNDARY_KINDS
+            - {
+                BoundaryKind.STATEMENT_IF,
+                BoundaryKind.STATEMENT_TRY,
+                BoundaryKind.STATEMENT_MATCH,
+            }
+        },
+    }
+)
+
+_POLICY_KEYS: Final = frozenset(
+    {
+        "preset",
+        "select",
+        "extend-select",
+        "ignore",
+        "skip-inline-suites",
+        "min-span-lines",
+        "min-body-lines",
+        "min-body-statements",
+        "min-clauses",
+        "min-depth",
+        "max-depth",
+        "stub-policy",
+        "rules",
+    }
+)
+_RULE_KEYS: Final = _POLICY_KEYS - {"preset", "select", "extend-select", "ignore", "rules"}
+_FILTER_KEYS: Final = frozenset(
+    {
+        "skip-inline-suites",
+        "min-span-lines",
+        "min-body-lines",
+        "min-body-statements",
+        "min-clauses",
+        "min-depth",
+        "max-depth",
+        "stub-policy",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RuleOverride:
+    """Optional filters that replace global settings for one boundary kind."""
+
+    skip_inline_suites: bool | None = None
+    min_span_lines: int | None = None
+    min_body_lines: int | None = None
+    min_body_statements: int | None = None
+    min_clauses: int | None = None
+    min_depth: int | None = None
+    max_depth: int | None = None
+    stub_policy: str | None = None
+    require: frozenset[str] = frozenset()
+####
+
+
+@dataclass(frozen=True, slots=True)
+class MarkerPolicy:
+    """The resolved rule set that decides which candidates produce markers."""
+
+    selected: frozenset[BoundaryKind]
+    skip_inline_suites: bool = False
+    min_span_lines: int = 1
+    min_body_lines: int = 1
+    min_body_statements: int = 1
+    min_clauses: int = 1
+    min_depth: int = 0
+    max_depth: int | None = None
+    stub_policy: str = "skip"
+    rules: Mapping[BoundaryKind, RuleOverride] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def allows(
+            self,
+            kind: BoundaryKind,
+            *,
+            span_lines: int,
+            suite_line_counts: tuple[int, ...],
+            suite_statement_counts: tuple[int, ...],
+            clause_count: int,
+            depth: int,
+            facts: frozenset[str],
+            inline_suite: bool,
+    ) -> bool:
+        """Return whether one fully analysed candidate should be rendered."""
+        if kind not in self.selected:
+            return False
+        ####
+        rule = self.rules.get(kind, RuleOverride())
+        stub_policy = rule.stub_policy or self.stub_policy
+        if "stub" in facts and stub_policy == "skip":
+            return False
+        ####
+        if not rule.require.issubset(facts):
+            return False
+        ####
+        skip_inline = _effective(rule.skip_inline_suites, self.skip_inline_suites)
+        if skip_inline and inline_suite:
+            return False
+        ####
+        if span_lines < _effective(rule.min_span_lines, self.min_span_lines):
+            return False
+        ####
+        if max(suite_line_counts, default=0) < _effective(
+                rule.min_body_lines, self.min_body_lines
+        ):
+            return False
+        ####
+        if max(suite_statement_counts, default=0) < _effective(
+                rule.min_body_statements, self.min_body_statements
+        ):
+            return False
+        ####
+        if clause_count < _effective(rule.min_clauses, self.min_clauses):
+            return False
+        ####
+        if depth < _effective(rule.min_depth, self.min_depth):
+            return False
+        ####
+        max_depth = _effective(rule.max_depth, self.max_depth)
+        return max_depth is None or depth <= max_depth
+    ####
+####
+
+
+def _effective(override: _Setting | None, default: _Setting) -> _Setting:
+    return default if override is None else override
+####
+
+
+def classic_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
+    """Return the compatibility policy that reproduces legacy formatting."""
+    return MarkerPolicy(
+        selected=CLASSIC_BOUNDARY_KINDS,
+        stub_policy="mark" if mark_stubs else "skip",
+    )
+####
+
+
+def expand_selectors(selectors: tuple[str, ...]) -> frozenset[BoundaryKind]:
+    """Expand exact selector names, groups, and namespace prefixes."""
+    expanded: set[BoundaryKind] = set()
+    for selector in selectors:
+        name = selector.strip().casefold()
+        if not name:
+            raise PolicyError("selector names must not be empty")
+        ####
+        group = SELECTOR_GROUPS.get(name)
+        if group is not None:
+            expanded.update(group)
+            continue
+        ####
+        try:
+            expanded.add(BoundaryKind(name))
+            continue
+        except ValueError:
+            pass
+        ####
+        prefix = f"{name}."
+        prefixed = {kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith(prefix)}
+        if prefixed:
+            expanded.update(prefixed)
+            continue
+        ####
+        suggestion = _selector_suggestion(name)
+        message = f'unknown selector "{selector}"'
+        if suggestion is not None:
+            message += f'; did you mean "{suggestion}"?'
+        ####
+        raise PolicyError(message)
+    ####
+    return frozenset(expanded)
+####
+
+
+def _selector_suggestion(selector: str) -> str | None:
+    candidates = sorted((*SELECTOR_GROUPS, *(kind.value for kind in ALL_BOUNDARY_KINDS)))
+    matches = [candidate for candidate in candidates if candidate.startswith(selector[:3])]
+    return matches[0] if matches else None
+####
+
+
+def selector_values(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Split repeatable command-line selector values on commas."""
+    return tuple(part.strip() for value in values for part in value.split(",") if part.strip())
+####
+
+
+def policy_from_mapping(settings: Mapping[str, object]) -> MarkerPolicy:
+    """Build a strict policy from a ``[tool.scope-markers]`` TOML table."""
+    unknown = set(settings) - _POLICY_KEYS
+    if unknown:
+        raise PolicyError(f"unknown scope-markers setting: {min(unknown)!r}")
+    ####
+    preset = _string(settings, "preset", "classic")
+    if preset not in PRESETS:
+        raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
+    ####
+    selected = PRESETS[preset]
+    if "select" in settings:
+        selected = expand_selectors(_string_array(settings, "select"))
+    ####
+    selected = selected | expand_selectors(_string_array(settings, "extend-select"))
+    selected = selected - expand_selectors(_string_array(settings, "ignore"))
+    policy = MarkerPolicy(selected=selected)
+    policy = _replace_filters(policy, settings)
+    rules = _rules_from_mapping(settings.get("rules"))
+    return replace(policy, rules=MappingProxyType(rules))
+####
+
+
+def policy_with_cli_overrides(
+        policy: MarkerPolicy,
+        *,
+        preset: str | None = None,
+        select: tuple[str, ...] = (),
+        extend_select: tuple[str, ...] = (),
+        ignore: tuple[str, ...] = (),
+        skip_inline_suites: bool | None = None,
+        min_span_lines: int | None = None,
+        min_body_lines: int | None = None,
+        min_body_statements: int | None = None,
+        min_clauses: int | None = None,
+        min_depth: int | None = None,
+        max_depth: int | None = None,
+        mark_stubs: bool = False,
+) -> MarkerPolicy:
+    """Apply command-line policy values after TOML settings."""
+    if preset is not None:
+        if preset not in PRESETS:
+            raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
+        ####
+        policy = replace(policy, selected=PRESETS[preset])
+    ####
+    if select:
+        policy = replace(policy, selected=expand_selectors(selector_values(select)))
+    ####
+    selected = policy.selected | expand_selectors(selector_values(extend_select))
+    selected = selected - expand_selectors(selector_values(ignore))
+    values: dict[str, object] = {"selected": selected}
+    for key, value in (
+            ("skip_inline_suites", skip_inline_suites),
+            ("min_span_lines", min_span_lines),
+            ("min_body_lines", min_body_lines),
+            ("min_body_statements", min_body_statements),
+            ("min_clauses", min_clauses),
+            ("min_depth", min_depth),
+            ("max_depth", max_depth),
+    ):
+        if value is not None:
+            values[key] = value
+        ####
+    ####
+    if mark_stubs:
+        values["stub_policy"] = "mark"
+    ####
+    updated = replace(policy, **values)
+    _validate_policy(updated)
+    return updated
+####
+
+
+def load_policy(config: Path | None) -> MarkerPolicy:
+    """Load one explicit TOML configuration file or return the classic policy."""
+    if config is None:
+        return classic_policy()
+    ####
+    try:
+        with config.open("rb") as stream:
+            document: object = tomllib.load(stream)
+        ####
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise PolicyError(f"{config}: {error}") from error
+    ####
+    if config.name == "pyproject.toml":
+        project = _table(document, f"{config} root")
+        tool = project.get("tool")
+        if tool is None:
+            return classic_policy()
+        ####
+        settings = _table(tool, f"{config} tool table").get("scope-markers")
+    else:
+        settings = document
+    ####
+    if settings is None:
+        return classic_policy()
+    ####
+    try:
+        return policy_from_mapping(_table(settings, f"{config} scope-markers settings"))
+    except PolicyError as error:
+        raise PolicyError(f"{config}: {error}") from error
+    ####
+####
+
+
+def find_config(start: Path) -> Path | None:
+    """Find the nearest supported configuration, starting at ``start``."""
+    directory = start.resolve() if start.is_dir() else start.resolve().parent
+    while True:
+        for name in ("scope-markers.toml", ".scope-markers.toml", "pyproject.toml"):
+            candidate = directory / name
+            if candidate.is_file() and (
+                    name != "pyproject.toml" or _has_scope_markers_table(candidate)
+            ):
+                return candidate
+            ####
+        ####
+        if directory.parent == directory:
+            return None
+        ####
+        directory = directory.parent
+    ####
+####
+
+
+def _has_scope_markers_table(path: Path) -> bool:
+    try:
+        with path.open("rb") as stream:
+            document: object = tomllib.load(stream)
+        ####
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise PolicyError(f"{path}: {error}") from error
+    ####
+    project = _table(document, f"{path} root")
+    tool = project.get("tool")
+    return tool is not None and "scope-markers" in _table(tool, f"{path} tool table")
+####
+
+
+def describe_policy(policy: MarkerPolicy) -> str:
+    """Render a stable, human-readable policy summary."""
+    selectors = ", ".join(sorted(kind.value for kind in policy.selected)) or "(none)"
+    max_depth = "unlimited" if policy.max_depth is None else str(policy.max_depth)
+    return "\n".join(
+        (
+            f"select = [{selectors}]",
+            f"skip-inline-suites = {str(policy.skip_inline_suites).lower()}",
+            f"min-span-lines = {policy.min_span_lines}",
+            f"min-body-lines = {policy.min_body_lines}",
+            f"min-body-statements = {policy.min_body_statements}",
+            f"min-clauses = {policy.min_clauses}",
+            f"min-depth = {policy.min_depth}",
+            f"max-depth = {max_depth}",
+            f"stub-policy = {policy.stub_policy}",
+        )
+    )
+####
+
+
+def list_selectors() -> str:
+    """Render the supported presets, groups, and exact selector names."""
+    lines = ["presets:", *[f"  {name}" for name in PRESETS], "groups:"]
+    lines.extend(f"  {name}" for name in SELECTOR_GROUPS)
+    lines.append("selectors:")
+    lines.extend(f"  {kind.value}" for kind in sorted(ALL_BOUNDARY_KINDS, key=str))
+    return "\n".join(lines)
+####
+
+
+def _replace_filters(policy: MarkerPolicy, values: Mapping[str, object]) -> MarkerPolicy:
+    replacements: dict[str, object] = {}
+    for key in _FILTER_KEYS:
+        if key not in values:
+            continue
+        ####
+        attribute = key.replace("-", "_")
+        if key == "stub-policy":
+            replacements[attribute] = _stub_policy(values[key])
+        elif key == "skip-inline-suites":
+            replacements[attribute] = _bool(values[key], key)
+        elif key == "max-depth" and values[key] is None:
+            replacements[attribute] = None
+        else:
+            replacements[attribute] = _non_negative_integer(values[key], key)
+        ####
+    ####
+    updated = replace(policy, **replacements)
+    _validate_policy(updated)
+    return updated
+####
+
+
+def _rules_from_mapping(raw: object) -> dict[BoundaryKind, RuleOverride]:
+    if raw is None:
+        return {}
+    ####
+    rules: dict[BoundaryKind, RuleOverride] = {}
+    for selector, values in _table(raw, "rules").items():
+        kinds = expand_selectors((selector,))
+        if len(kinds) != 1:
+            raise PolicyError(f"rule {selector!r} must name one exact selector")
+        ####
+        rule_table = _table(values, f"rule {selector!r}")
+        unknown = set(rule_table) - (_RULE_KEYS | {"require"})
+        if unknown:
+            raise PolicyError(f"unknown setting for rule {selector!r}: {min(unknown)!r}")
+        ####
+        rule_values = _replace_filters(MarkerPolicy(selected=frozenset()), rule_table)
+        require = frozenset(_string_array(rule_table, "require"))
+        kind = next(iter(kinds))
+        invalid_predicates = require - _PREDICATES_BY_KIND[kind]
+        if invalid_predicates:
+            raise PolicyError(
+                f"rule {selector!r} does not support predicate "
+                f"{min(invalid_predicates)!r}"
+            )
+        ####
+        rules[kind] = RuleOverride(
+            skip_inline_suites=(
+                rule_values.skip_inline_suites if "skip-inline-suites" in rule_table else None
+            ),
+            min_span_lines=(
+                rule_values.min_span_lines if "min-span-lines" in rule_table else None
+            ),
+            min_body_lines=(
+                rule_values.min_body_lines if "min-body-lines" in rule_table else None
+            ),
+            min_body_statements=(
+                rule_values.min_body_statements
+                if "min-body-statements" in rule_table
+                else None
+            ),
+            min_clauses=rule_values.min_clauses if "min-clauses" in rule_table else None,
+            min_depth=rule_values.min_depth if "min-depth" in rule_table else None,
+            max_depth=rule_values.max_depth if "max-depth" in rule_table else None,
+            stub_policy=rule_values.stub_policy if "stub-policy" in rule_table else None,
+            require=require,
+        )
+    ####
+    return rules
+####
+
+
+def _validate_policy(policy: MarkerPolicy) -> None:
+    if policy.stub_policy not in {"skip", "mark"}:
+        raise PolicyError("stub-policy must be 'skip' or 'mark'")
+    ####
+    if policy.max_depth is not None and policy.max_depth < policy.min_depth:
+        raise PolicyError("max-depth must be greater than or equal to min-depth")
+    ####
+####
+
+
+def _string(settings: Mapping[str, object], key: str, default: str) -> str:
+    value = settings.get(key, default)
+    if not isinstance(value, str):
+        raise PolicyError(f"{key} must be a string")
+    ####
+    return value.casefold()
+####
+
+
+def _string_array(settings: Mapping[str, object], key: str) -> tuple[str, ...]:
+    if key not in settings:
+        return ()
+    ####
+    value = settings[key]
+    if not isinstance(value, list):
+        raise PolicyError(f"{key} must be an array of strings")
+    ####
+    strings: list[str] = []
+    for item in cast(list[object], value):
+        if not isinstance(item, str):
+            raise PolicyError(f"{key} must be an array of strings")
+        ####
+        strings.append(item)
+    ####
+    return tuple(strings)
+####
+
+
+def _table(value: object, description: str) -> Mapping[str, object]:
+    if not isinstance(value, dict):
+        raise PolicyError(f"{description} must be a table")
+    ####
+    table: dict[str, object] = {}
+    for key, item in cast(dict[object, object], value).items():
+        if not isinstance(key, str):
+            raise PolicyError(f"{description} keys must be strings")
+        ####
+        table[key] = item
+    ####
+    return table
+####
+
+
+def _bool(value: object, key: str) -> bool:
+    if not isinstance(value, bool):
+        raise PolicyError(f"{key} must be true or false")
+    ####
+    return value
+####
+
+
+def _non_negative_integer(value: object, key: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise PolicyError(f"{key} must be a non-negative integer")
+    ####
+    return value
+####
+
+
+def _stub_policy(value: object) -> str:
+    if not isinstance(value, str) or value.casefold() not in {"skip", "mark"}:
+        raise PolicyError("stub-policy must be 'skip' or 'mark'")
+    ####
+    return value.casefold()
+####

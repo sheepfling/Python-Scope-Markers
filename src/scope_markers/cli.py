@@ -15,6 +15,15 @@ from ._implementation import (
     write_atomic,
 )
 from ._markdown import inspect_markdown_file
+from ._policy import (
+    MarkerPolicy,
+    PolicyError,
+    describe_policy,
+    find_config,
+    list_selectors,
+    load_policy,
+    policy_with_cli_overrides,
+)
 from .api import (
     __version__,
     discover_python_files,
@@ -52,6 +61,19 @@ def _positive_indent_width(value: str) -> int:
         raise argparse.ArgumentTypeError("must be a positive integer")
     ####
     return width
+####
+
+
+def _non_negative_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from error
+    ####
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    ####
+    return parsed
 ####
 
 
@@ -94,6 +116,89 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="WIDTH",
         help="normalize logical block indentation to WIDTH spaces before marking "
         "(cannot be combined with --strip)",
+    )
+    policy = parser.add_argument_group("marker policy")
+    policy.add_argument("--preset", metavar="NAME", help="use a named marker-policy preset")
+    policy.add_argument(
+        "--select",
+        action="append",
+        default=[],
+        metavar="SELECTOR",
+        help="replace configured selectors; repeat or separate selectors with commas",
+    )
+    policy.add_argument(
+        "--extend-select",
+        action="append",
+        default=[],
+        metavar="SELECTOR",
+        help="add selectors; repeat or separate selectors with commas",
+    )
+    policy.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        metavar="SELECTOR",
+        help="remove selectors; repeat or separate selectors with commas",
+    )
+    policy.add_argument(
+        "--skip-inline-suites",
+        action="store_true",
+        default=None,
+        help="do not mark suites whose body starts on the header line",
+    )
+    policy.add_argument(
+        "--min-span-lines",
+        type=_non_negative_integer,
+        metavar="N",
+        help="require candidates to span at least N physical lines",
+    )
+    policy.add_argument(
+        "--min-body-lines",
+        type=_non_negative_integer,
+        metavar="N",
+        help="require at least one owned suite to span N physical lines",
+    )
+    policy.add_argument(
+        "--min-body-statements",
+        type=_non_negative_integer,
+        metavar="N",
+        help="require at least one owned suite to contain N direct statements",
+    )
+    policy.add_argument(
+        "--min-clauses",
+        type=_non_negative_integer,
+        metavar="N",
+        help="require candidates to own at least N suites or branches",
+    )
+    policy.add_argument(
+        "--min-depth",
+        type=_non_negative_integer,
+        metavar="N",
+        help="only mark candidates nested at least N compound statements",
+    )
+    policy.add_argument(
+        "--max-depth",
+        type=_non_negative_integer,
+        metavar="N",
+        help="do not mark candidates nested deeper than N compound statements",
+    )
+    configuration = policy.add_mutually_exclusive_group()
+    configuration.add_argument("--config", type=Path, metavar="PATH", help="use one TOML config")
+    configuration.add_argument(
+        "--isolated",
+        action="store_true",
+        help="ignore a configuration discovered from the current directory",
+    )
+    policy.add_argument(
+        "--show-settings",
+        type=Path,
+        metavar="PATH",
+        help="print the resolved policy for PATH and exit",
+    )
+    policy.add_argument(
+        "--list-selectors",
+        action="store_true",
+        help="print supported policy presets, groups, and selectors, then exit",
     )
     output = parser.add_mutually_exclusive_group()
     output.add_argument(
@@ -172,6 +277,58 @@ def main(argv: Sequence[str] | None = None) -> int:
     if strip and indent_width is not None:
         parser.error("--indent-width cannot be used with --strip")
     ####
+    policy_option_used = any(
+        (
+            args.preset is not None,
+            bool(args.select),
+            bool(args.extend_select),
+            bool(args.ignore),
+            args.skip_inline_suites is not None,
+            args.min_span_lines is not None,
+            args.min_body_lines is not None,
+            args.min_body_statements is not None,
+            args.min_clauses is not None,
+            args.min_depth is not None,
+            args.max_depth is not None,
+        )
+    )
+    if strip and policy_option_used:
+        parser.error("marker-policy options cannot be used with --strip")
+    ####
+    if bool(args.list_selectors):
+        print(list_selectors())
+        return 0
+    ####
+
+    def resolved_policy(path: Path) -> MarkerPolicy:
+        config = args.config
+        if config is None and not bool(args.isolated):
+            config = find_config(path)
+        ####
+        return policy_with_cli_overrides(
+            load_policy(config),
+            preset=args.preset,
+            select=tuple(args.select),
+            extend_select=tuple(args.extend_select),
+            ignore=tuple(args.ignore),
+            skip_inline_suites=args.skip_inline_suites,
+            min_span_lines=args.min_span_lines,
+            min_body_lines=args.min_body_lines,
+            min_body_statements=args.min_body_statements,
+            min_clauses=args.min_clauses,
+            min_depth=args.min_depth,
+            max_depth=args.max_depth,
+            mark_stubs=mark_stubs,
+        )
+    ####
+    if args.show_settings is not None:
+        try:
+            print(describe_policy(resolved_policy(args.show_settings)))
+        except PolicyError as error:
+            parser.error(str(error))
+        ####
+        return 0
+    ####
 
     files, errors = discover_python_files(
         paths,
@@ -190,18 +347,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path in files:
         processed_files += 1
         try:
+            marker_policy = resolved_policy(path)
             if include_markdown and path.suffix.casefold() in MARKDOWN_SUFFIXES:
                 inspection = inspect_markdown_file(
                     path,
                     mark_stubs=mark_stubs,
                     indent_width=indent_width,
                     strip=strip,
+                    policy=marker_policy,
                 )
             elif strip:
                 inspection = inspect_stripped_file(path)
             else:
                 inspection = inspect_file(
-                    path, mark_stubs=mark_stubs, indent_width=indent_width
+                    path,
+                    mark_stubs=mark_stubs,
+                    indent_width=indent_width,
+                    policy=marker_policy,
                 )
             ####
             if not inspection.changed:

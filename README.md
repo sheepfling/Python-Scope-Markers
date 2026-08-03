@@ -147,6 +147,65 @@ from scope_markers.api import format_markdown_source
 formatted = format_markdown_source(markdown_text)
 ```
 
+## Marker policy
+
+The default `classic` policy preserves the standard output: markers after every
+complete compound statement and after every `match` `case`. A policy selects
+eligible boundaries first, then applies objective shape filters. This avoids a
+separate switch for every statement form.
+
+Available presets are `none`, `definitions`, `statements`, `classic`, and
+`all`. The current exact selectors are:
+
+```text
+statement.function  statement.class  statement.if    statement.for
+statement.while     statement.with   statement.try   statement.match
+clause.match.case
+```
+
+Use `--list-selectors` to print the current presets, groups, and selectors.
+Groups include `definitions`, `statements`, `clauses`, `conditionals`, `loops`,
+`contexts`, `exceptions`, and `patterns`.
+
+Configure a project in `pyproject.toml`:
+
+```toml
+[tool.scope-markers]
+preset = "statements"
+skip-inline-suites = true
+min-body-lines = 2
+
+[tool.scope-markers.rules."statement.function"]
+min-body-lines = 1
+
+[tool.scope-markers.rules."statement.if"]
+require = ["has-else"]
+```
+
+The supported global filters are `skip-inline-suites`, `min-span-lines`,
+`min-body-lines`, `min-body-statements`, `min-clauses`, `min-depth`,
+`max-depth`, and `stub-policy` (`skip` or `mark`). A rule table inherits global
+values for settings it does not specify. Initial rule predicates are
+`nested`, `module-level`, `class-level`, `function-level`, and `stub`, plus
+`has-elif`/`has-else` for `statement.if`, `multiple-handlers`/`has-finally` for
+`statement.try`, and `multiple-cases` for `statement.match`.
+
+The CLI finds the nearest `scope-markers.toml`, `.scope-markers.toml`, or
+`pyproject.toml` containing `[tool.scope-markers]` for each processed file.
+Use `--config PATH` to force one file, `--isolated` to ignore discovered
+configuration, or `--show-settings PATH` to inspect the resolved policy.
+Command-line policy options override configuration:
+
+```bash
+scope-markers --preset definitions src
+scope-markers --select statement.match src
+scope-markers --preset classic --ignore clause.match.case src
+scope-markers --select statement.if --min-body-lines 2 src
+```
+
+`--strip` removes every managed marker and therefore cannot be combined with
+policy-selection or shape-filter options.
+
 ## Discovery and common options
 
 With no paths, the current directory is scanned recursively. Common VCS,

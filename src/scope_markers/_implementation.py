@@ -12,13 +12,15 @@ import tokenize
 from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fnmatch import fnmatch
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from io import StringIO
 from pathlib import Path
 from typing import Final, cast
+
+from ._policy import BoundaryKind, MarkerPolicy, PolicyError, classic_policy
 
 try:
     __version__ = package_version("scope-markers")
@@ -38,6 +40,7 @@ FILE_PROCESSING_ERRORS: Final = (
     UnicodeError,
     tokenize.TokenError,
     ScopeMarkersError,
+    PolicyError,
 )
 # All public file operations and the CLI convert these expected input/filesystem
 # failures into diagnostics. Keep the tuple shared so new operations cannot drift.
@@ -79,6 +82,7 @@ DEFAULT_SKIP_DIRECTORIES: Final = frozenset(
 )
 SKIP_DIRECTORY_NAMES: Final = frozenset(name.casefold() for name in DEFAULT_SKIP_DIRECTORIES)
 FUNCTION_STATEMENTS: Final = (ast.FunctionDef, ast.AsyncFunctionDef)
+TRY_STATEMENTS: Final = (ast.Try, ast.TryStar)
 COMPOUND_STATEMENTS: Final = (
     *FUNCTION_STATEMENTS,
     ast.ClassDef,
@@ -88,8 +92,7 @@ COMPOUND_STATEMENTS: Final = (
     ast.While,
     ast.With,
     ast.AsyncWith,
-    ast.Try,
-    getattr(ast, "TryStar", ast.Try),
+    *TRY_STATEMENTS,
     ast.Match,
 )
 
@@ -101,6 +104,22 @@ class ScopeBoundary:
     indentation: str
     indentation_width: int
     line_number: int
+####
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundaryCandidate:
+    """A policy-independent analysed marker insertion candidate."""
+
+    kind: BoundaryKind
+    boundary: ScopeBoundary
+    span_lines: int
+    suite_line_counts: tuple[int, ...]
+    suite_statement_counts: tuple[int, ...]
+    clause_count: int
+    depth: int
+    facts: frozenset[str]
+    inline_suite: bool
 ####
 
 
@@ -391,9 +410,7 @@ def _is_stub_function(node: ast.stmt) -> bool:
 ####
 
 
-def _compound_nodes(
-        tree: ast.AST, lines: Sequence[str], *, mark_stubs: bool
-) -> list[ast.stmt]:
+def _compound_nodes(tree: ast.AST, lines: Sequence[str]) -> list[ast.stmt]:
     parents = _parents(tree)
     nodes: list[ast.stmt] = []
     for candidate in ast.walk(tree):
@@ -402,9 +419,6 @@ def _compound_nodes(
         ####
         node = candidate
         if isinstance(node, ast.If) and _is_elif(node, parents, lines):
-            continue
-        ####
-        if not mark_stubs and _is_stub_function(node):
             continue
         ####
         nodes.append(node)
@@ -491,24 +505,6 @@ def _match_case_boundary(
 ####
 
 
-def _match_case_boundaries(tree: ast.AST, lines: Sequence[str]) -> list[ScopeBoundary]:
-    case_header_lines = _match_case_header_lines(lines)
-    boundaries: list[ScopeBoundary] = []
-    for candidate in ast.walk(tree):
-        if not isinstance(candidate, ast.Match):
-            continue
-        ####
-        for case in candidate.cases:
-            boundary = _match_case_boundary(case, lines, case_header_lines)
-            if boundary is not None:
-                boundaries.append(boundary)
-            ####
-        ####
-    ####
-    return boundaries
-####
-
-
 def _compound_boundary(node: ast.stmt, lines: Sequence[str]) -> ScopeBoundary:
     if not 1 <= node.lineno <= len(lines):
         raise ScopeMarkersError("compound statement has an invalid source location")
@@ -528,14 +524,47 @@ def _scope_boundaries(
         tree: ast.AST,
         lines: Sequence[str],
         *,
-        mark_stubs: bool,
+        policy: MarkerPolicy,
 ) -> list[ScopeBoundary]:
-    boundaries = [
-        _compound_boundary(node, lines)
-        for node in _compound_nodes(tree, lines, mark_stubs=mark_stubs)
+    parents = _parents(tree)
+    nodes = _compound_nodes(tree, lines)
+    case_header_lines = _match_case_header_lines(lines)
+    inline_headers = _inline_suite_header_lines(
+        "".join(lines),
+        _compound_header_lines(tree, lines) | set(case_header_lines),
+    )
+    candidates = [
+        _compound_candidate(node, lines, parents, inline_headers)
+        for node in nodes
     ]
-    boundaries.extend(_match_case_boundaries(tree, lines))
-    return boundaries
+    for match in (node for node in nodes if isinstance(node, ast.Match)):
+        for case in match.cases:
+            candidate = _case_candidate(
+                case,
+                lines,
+                case_header_lines,
+                inline_headers,
+                _candidate_depth(match, parents) + 1,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+            ####
+        ####
+    ####
+    return [
+        candidate.boundary
+        for candidate in candidates
+        if policy.allows(
+            candidate.kind,
+            span_lines=candidate.span_lines,
+            suite_line_counts=candidate.suite_line_counts,
+            suite_statement_counts=candidate.suite_statement_counts,
+            clause_count=candidate.clause_count,
+            depth=candidate.depth,
+            facts=candidate.facts,
+            inline_suite=candidate.inline_suite,
+        )
+    ]
 ####
 
 
@@ -824,6 +853,7 @@ def format_source(
         filename: str = "<unknown>",
         mark_stubs: bool = False,
         indent_width: int | None = None,
+        policy: MarkerPolicy | None = None,
 ) -> str:
     """Return source with canonical markers after supported compound statements."""
     if indent_width is not None:
@@ -834,8 +864,12 @@ def format_source(
     tree = ast.parse(clean_source, filename=filename)
     lines = _physical_lines(clean_source)
     default_newline = _preferred_newline(clean_source or source)
+    effective_policy = policy or classic_policy(mark_stubs=mark_stubs)
+    if mark_stubs and policy is not None and policy.stub_policy == "skip":
+        effective_policy = replace(policy, stub_policy="mark")
+    ####
     insertions: dict[int, list[ScopeBoundary]] = {}
-    for boundary in _scope_boundaries(tree, lines, mark_stubs=mark_stubs):
+    for boundary in _scope_boundaries(tree, lines, policy=effective_policy):
         insertions.setdefault(boundary.index, []).append(boundary)
     ####
     for index in sorted(insertions, reverse=True):
@@ -924,6 +958,216 @@ def _is_supported_source_file(
                     path.suffix.casefold() not in MARKDOWN_SUFFIXES
                     and _matches_pattern(path, root, include_patterns)
             )
+    )
+####
+
+
+def _compound_kind(node: ast.stmt) -> BoundaryKind:
+    if isinstance(node, FUNCTION_STATEMENTS):
+        return BoundaryKind.STATEMENT_FUNCTION
+    ####
+    if isinstance(node, ast.ClassDef):
+        return BoundaryKind.STATEMENT_CLASS
+    ####
+    if isinstance(node, ast.If):
+        return BoundaryKind.STATEMENT_IF
+    ####
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return BoundaryKind.STATEMENT_FOR
+    ####
+    if isinstance(node, ast.While):
+        return BoundaryKind.STATEMENT_WHILE
+    ####
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return BoundaryKind.STATEMENT_WITH
+    ####
+    if isinstance(node, TRY_STATEMENTS):
+        return BoundaryKind.STATEMENT_TRY
+    ####
+    if isinstance(node, ast.Match):
+        return BoundaryKind.STATEMENT_MATCH
+    ####
+    raise ScopeMarkersError(f"unsupported compound statement: {type(node).__name__}")
+####
+
+
+def _if_suites(
+        node: ast.If, parents: Mapping[int, ast.AST], lines: Sequence[str]
+) -> tuple[Sequence[ast.stmt], ...]:
+    suites: list[Sequence[ast.stmt]] = [node.body]
+    current = node
+    while (
+            len(current.orelse) == 1
+            and isinstance(current.orelse[0], ast.If)
+            and _is_elif(current.orelse[0], parents, lines)
+    ):
+        current = current.orelse[0]
+        suites.append(current.body)
+    ####
+    if current.orelse:
+        suites.append(current.orelse)
+    ####
+    return tuple(suites)
+####
+
+
+def _owned_suites(
+        node: ast.stmt, parents: Mapping[int, ast.AST], lines: Sequence[str]
+) -> tuple[Sequence[ast.stmt], ...]:
+    if isinstance(node, ast.If):
+        return _if_suites(node, parents, lines)
+    ####
+    if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+        return tuple(suite for suite in (node.body, node.orelse) if suite)
+    ####
+    if isinstance(node, TRY_STATEMENTS):
+        return tuple(
+            suite
+            for suite in (
+                node.body,
+                *(handler.body for handler in node.handlers),
+                node.orelse,
+                node.finalbody,
+            )
+            if suite
+        )
+    ####
+    if isinstance(node, ast.Match):
+        return tuple(case.body for case in node.cases if case.body)
+    ####
+    body = getattr(node, "body", ())
+    return (body,) if body else ()
+####
+
+
+def _suite_line_count(suite: Sequence[ast.stmt]) -> int:
+    if not suite:
+        return 0
+    ####
+    start = suite[0].lineno
+    end = suite[-1].end_lineno
+    return max(1, (end if end is not None else start) - start + 1)
+####
+
+
+def _ancestor_nodes(node: ast.AST, parents: Mapping[int, ast.AST]) -> Iterator[ast.AST]:
+    parent = parents.get(id(node))
+    while parent is not None:
+        yield parent
+        parent = parents.get(id(parent))
+    ####
+####
+
+
+def _candidate_depth(node: ast.AST, parents: Mapping[int, ast.AST]) -> int:
+    return sum(
+        isinstance(parent, COMPOUND_STATEMENTS) for parent in _ancestor_nodes(node, parents)
+    )
+####
+
+
+def _candidate_facts(
+        node: ast.stmt,
+        parents: Mapping[int, ast.AST],
+        lines: Sequence[str],
+        depth: int,
+) -> frozenset[str]:
+    facts: set[str] = set()
+    ancestors = tuple(_ancestor_nodes(node, parents))
+    if isinstance(parents.get(id(node)), ast.Module):
+        facts.add("module-level")
+    ####
+    if any(isinstance(ancestor, ast.ClassDef) for ancestor in ancestors):
+        facts.add("class-level")
+    ####
+    if any(isinstance(ancestor, FUNCTION_STATEMENTS) for ancestor in ancestors):
+        facts.add("function-level")
+    ####
+    if depth:
+        facts.add("nested")
+    ####
+    if _is_stub_function(node):
+        facts.add("stub")
+    ####
+    if isinstance(node, ast.If):
+        current = node
+        has_elif = False
+        while (
+                len(current.orelse) == 1
+                and isinstance(current.orelse[0], ast.If)
+                and _is_elif(current.orelse[0], parents, lines)
+        ):
+            has_elif = True
+            current = current.orelse[0]
+        ####
+        if has_elif:
+            facts.add("has-elif")
+        ####
+        if current.orelse:
+            facts.add("has-else")
+        ####
+    elif isinstance(node, TRY_STATEMENTS):
+        if len(node.handlers) > 1:
+            facts.add("multiple-handlers")
+        ####
+        if node.finalbody:
+            facts.add("has-finally")
+        ####
+    elif isinstance(node, ast.Match) and len(node.cases) > 1:
+        facts.add("multiple-cases")
+    ####
+    return frozenset(facts)
+####
+
+
+def _compound_candidate(
+        node: ast.stmt,
+        lines: Sequence[str],
+        parents: Mapping[int, ast.AST],
+        inline_headers: set[int],
+) -> _BoundaryCandidate:
+    suites = _owned_suites(node, parents, lines)
+    boundary = _compound_boundary(node, lines)
+    end_line = node.end_lineno if node.end_lineno is not None else node.lineno
+    depth = _candidate_depth(node, parents)
+    return _BoundaryCandidate(
+        kind=_compound_kind(node),
+        boundary=boundary,
+        span_lines=max(1, end_line - node.lineno + 1),
+        suite_line_counts=tuple(_suite_line_count(suite) for suite in suites),
+        suite_statement_counts=tuple(len(suite) for suite in suites),
+        clause_count=len(suites),
+        depth=depth,
+        facts=_candidate_facts(node, parents, lines, depth),
+        inline_suite=any(
+            suite and suite[0].lineno in inline_headers for suite in suites
+        ),
+    )
+####
+
+
+def _case_candidate(
+        case: ast.match_case,
+        lines: Sequence[str],
+        case_header_lines: Sequence[int],
+        inline_headers: set[int],
+        depth: int,
+) -> _BoundaryCandidate | None:
+    boundary = _match_case_boundary(case, lines, case_header_lines)
+    if boundary is None or not case.body:
+        return None
+    ####
+    end_line = case.body[-1].end_lineno or case.body[-1].lineno
+    return _BoundaryCandidate(
+        kind=BoundaryKind.CLAUSE_MATCH_CASE,
+        boundary=boundary,
+        span_lines=max(1, end_line - boundary.line_number + 1),
+        suite_line_counts=(_suite_line_count(case.body),),
+        suite_statement_counts=(len(case.body),),
+        clause_count=1,
+        depth=depth,
+        facts=frozenset(),
+        inline_suite=case.body[0].lineno in inline_headers,
     )
 ####
 
@@ -1115,7 +1359,11 @@ def python_files(
 
 
 def inspect_file(
-        path: Path, *, mark_stubs: bool = False, indent_width: int | None = None
+        path: Path,
+        *,
+        mark_stubs: bool = False,
+        indent_width: int | None = None,
+        policy: MarkerPolicy | None = None,
 ) -> FileInspection:
     """Read and canonicalize one Python file without modifying it."""
     source, encoding = _read_source(path)
@@ -1124,6 +1372,7 @@ def inspect_file(
         filename=str(path),
         mark_stubs=mark_stubs,
         indent_width=indent_width,
+        policy=policy,
     )
     return FileInspection(path=path, source=source, formatted=formatted, encoding=encoding)
 ####
@@ -1194,11 +1443,15 @@ def process_file(
         fix: bool,
         mark_stubs: bool = False,
         indent_width: int | None = None,
+        policy: MarkerPolicy | None = None,
 ) -> tuple[bool, str | None]:
     """Check or fix one file and return ``(changed, error)``."""
     try:
         inspection = inspect_file(
-            path, mark_stubs=mark_stubs, indent_width=indent_width
+            path,
+            mark_stubs=mark_stubs,
+            indent_width=indent_width,
+            policy=policy,
         )
         if inspection.changed and fix:
             _write_atomic(path, inspection.formatted.encode(inspection.encoding))

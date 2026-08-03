@@ -2023,16 +2023,24 @@ def test_strip_file_returns_diagnostic_for_invalid_encoding_declaration(
 
 def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None:
     assert api.__all__ == (
+        "BoundaryKind",
         "FileInspection",
+        "MarkerPolicy",
+        "PolicyError",
         "ScopeBoundary",
         "ScopeMarkersError",
         "__version__",
+        "classic_policy",
+        "describe_policy",
         "discover_python_files",
+        "expand_selectors",
+        "find_config",
         "format_markdown_source",
         "format_source",
         "inspect_file",
         "inspect_markdown_file",
         "inspect_stripped_file",
+        "load_policy",
         "process_file",
         "process_markdown_file",
         "python_files",
@@ -2071,6 +2079,100 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
 
     boundary = api.ScopeBoundary(0, "", 0, 1)
     assert boundary.line_number == 1
+####
+
+
+def test_marker_policy_can_select_existing_boundary_kinds_and_filter_shapes() -> None:
+    source = (
+        "def outer():\n"
+        "    if ready:\n"
+        "        work()\n"
+        "match value:\n"
+        "    case 1:\n"
+        "        handle()\n"
+    )
+    definitions = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
+    statements = api.MarkerPolicy(selected=api.expand_selectors(("statements",)))
+    cases = api.MarkerPolicy(selected=api.expand_selectors(("clause.match.case",)))
+    nested = api.MarkerPolicy(
+        selected=api.expand_selectors(("statements",)), min_depth=1
+    )
+
+    assert api.format_source(source, policy=definitions).count("####") == 1
+    assert api.format_source(source, policy=statements).count("####") == 3
+    assert api.format_source(source, policy=cases).count("####") == 1
+    assert api.format_source(source, policy=nested).count("####") == 1
+####
+
+
+def test_marker_policy_filters_inline_and_short_suites() -> None:
+    source = "if ready: work()\nif (\n    later\n): work()\nif tomorrow:\n    work()\n"
+    policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("statement.if",)),
+        skip_inline_suites=True,
+        min_body_lines=2,
+    )
+
+    assert api.format_source(source, policy=policy) == source
+####
+
+
+def test_policy_toml_is_strict_and_can_change_cli_output(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "example.py"
+    source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    config = tmp_path / "scope-markers.toml"
+    config.write_text('preset = "definitions"\n', encoding="utf-8")
+
+    policy = api.load_policy(config)
+    assert api.format_source(source.read_text(encoding="utf-8"), policy=policy) == (
+        "if ready:\n    work()\n"
+    )
+    assert cli.main(["--config", str(config), "--quiet", str(source)]) == 0
+    assert cli.main(["--config", str(config), "--show-settings", str(source)]) == 0
+    assert "select = [statement.class, statement.function]" in capsys.readouterr().out
+
+    config.write_text('select = ["statement.iff"]\n', encoding="utf-8")
+    with pytest.raises(api.PolicyError, match="unknown selector"):
+        api.load_policy(config)
+    ####
+####
+
+
+def test_policy_rule_predicates_and_nearest_config_apply_per_file(tmp_path: Path) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    source = nested / "example.py"
+    source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    (tmp_path / "scope-markers.toml").write_text('preset = "definitions"\n', encoding="utf-8")
+    (nested / "scope-markers.toml").write_text(
+        "select = [\"statement.if\"]\n"
+        "[rules.\"statement.if\"]\nrequire = [\"has-else\"]\n",
+        encoding="utf-8",
+    )
+
+    assert cli.main(["--fix", "--quiet", str(source)]) == 0
+    assert source.read_text(encoding="utf-8") == "if ready:\n    work()\n"
+
+    assert api.load_policy(nested / "scope-markers.toml").selected == frozenset(
+        {api.BoundaryKind.STATEMENT_IF}
+    )
+####
+
+
+def test_cli_policy_options_are_listed_and_rejected_while_stripping(
+        capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["--list-selectors"]) == 0
+    assert "statement.function" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as error:
+        cli.main(["--strip", "--preset", "definitions"])
+    ####
+
+    assert error.value.code == 2
+    assert "marker-policy options cannot be used with --strip" in capsys.readouterr().err
 ####
 
 

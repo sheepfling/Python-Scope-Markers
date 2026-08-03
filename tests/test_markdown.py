@@ -91,6 +91,16 @@ def test_format_markdown_source_can_strip_fenced_markers() -> None:
 ####
 
 
+def test_format_markdown_source_uses_the_supplied_marker_policy() -> None:
+    source = "```python\ndef example():\n    if ready:\n        pass\n```\n"
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
+
+    assert api.format_markdown_source(source, policy=policy) == (
+        "```python\ndef example():\n    if ready:\n        pass\n####\n```\n"
+    )
+####
+
+
 @pytest.mark.parametrize(
     "option", ("no-scope-markers", "scope-markers: off", "scope-markers=ignore")
 )

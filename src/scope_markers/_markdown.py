@@ -15,6 +15,7 @@ from ._implementation import (
     format_source,
     strip_markers,
 )
+from ._policy import MarkerPolicy
 
 PYTHON_FENCE_LANGUAGES = frozenset({"py", "python", "python3"})
 _FENCE_PATTERN = re.compile(r"^( {0,3})([`~]{3,})(.*)$")
@@ -118,6 +119,7 @@ def format_markdown_source(
         mark_stubs: bool = False,
         indent_width: int | None = None,
         strip: bool = False,
+        policy: MarkerPolicy | None = None,
 ) -> str:
     """Format Python fences in Markdown while preserving surrounding text."""
     lines = _physical_lines(source)
@@ -156,6 +158,7 @@ def format_markdown_source(
                 filename=f"{filename}:{index + 1}",
                 mark_stubs=mark_stubs,
                 indent_width=indent_width,
+                policy=policy,
             )
         ####
         formatted_payload_lines = _physical_lines(formatted_payload)
@@ -176,6 +179,7 @@ def inspect_markdown_file(
         mark_stubs: bool = False,
         indent_width: int | None = None,
         strip: bool = False,
+        policy: MarkerPolicy | None = None,
 ) -> FileInspection:
     """Read and canonicalize Python fences in one Markdown file."""
     source, encoding = _read_source(path)
@@ -185,6 +189,7 @@ def inspect_markdown_file(
         mark_stubs=mark_stubs,
         indent_width=indent_width,
         strip=strip,
+        policy=policy,
     )
     return FileInspection(path=path, source=source, formatted=formatted, encoding=encoding)
 ####
@@ -197,6 +202,7 @@ def process_markdown_file(
         mark_stubs: bool = False,
         indent_width: int | None = None,
         strip: bool = False,
+        policy: MarkerPolicy | None = None,
 ) -> tuple[bool, str | None]:
     """Check or fix one Markdown file and return ``(changed, error)``."""
     try:
@@ -205,6 +211,7 @@ def process_markdown_file(
             mark_stubs=mark_stubs,
             indent_width=indent_width,
             strip=strip,
+            policy=policy,
         )
         if inspection.changed and fix:
             _write_atomic(path, inspection.formatted.encode(inspection.encoding))
