@@ -1413,6 +1413,51 @@ def test_ignore_next_block_before_clause_keeps_enclosing_boundary(
 ####
 
 
+def test_ignore_next_clause_targets_logical_candidate_not_shared_marker() -> None:
+    source = (
+        "if ready:\n"
+        "    work()\n"
+        "# scope-markers: ignore-next\n"
+        "else:\n"
+        "    recover()\n"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    explanations = api.explain_source(source, policy=policy)
+
+    assert any(
+        explanation.kind is api.BoundaryKind.STATEMENT_IF
+        and explanation.will_mark
+        for explanation in explanations
+    )
+    assert any(
+        explanation.kind is api.BoundaryKind.CLAUSE_IF_ELSE
+        and not explanation.will_mark
+        and explanation.reason == "ignored by source directive"
+        for explanation in explanations
+    )
+####
+
+
+def test_ignore_next_block_case_preserves_match_boundary() -> None:
+    source = (
+        "match value:\n"
+        "    # scope-markers: ignore-next-block\n"
+        "    case 1:\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    case 2:\n"
+        "        pass\n"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    formatted = scope_markers.format_source(source, policy=policy)
+
+    assert formatted.count("####") == 2
+    assert formatted.endswith("    ####\n####\n")
+####
+
+
 def test_directive_like_comments_are_not_treated_as_scope_directives() -> None:
     source = (
         "# noqa: scope-markers: ignore-next-block\n"

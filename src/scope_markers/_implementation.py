@@ -97,6 +97,29 @@ class _BoundaryCandidate:
 ####
 
 
+_PhysicalBoundaryIdentity = tuple[int, str]
+_CandidateIdentity = tuple[BoundaryKind, int, str]
+
+
+def _physical_boundary_identity(candidate: _BoundaryCandidate) -> _PhysicalBoundaryIdentity:
+    """Identify the rendered insertion point, independent of candidate kind."""
+    return (candidate.boundary.index, candidate.boundary.indentation)
+####
+
+
+def _candidate_identity(candidate: _BoundaryCandidate) -> _CandidateIdentity:
+    """Identify a logical candidate without collapsing different boundary kinds."""
+    index, indentation = _physical_boundary_identity(candidate)
+    return (candidate.kind, index, indentation)
+####
+
+
+def _is_clause_candidate(candidate: _BoundaryCandidate) -> bool:
+    """Return whether a candidate represents one internal suite or clause."""
+    return candidate.kind.value.startswith("clause.")
+####
+
+
 def _first_content_row(lines: Sequence[str]) -> int | None:
     return next(
         (row for row, line in enumerate(lines, start=1) if _line_body(line).strip()),
@@ -593,17 +616,19 @@ def _scope_boundaries(
         policy: MarkerPolicy,
 ) -> list[ScopeBoundary]:
     boundaries: list[ScopeBoundary] = []
-    seen: set[tuple[int, str]] = set()
+    seen: set[_PhysicalBoundaryIdentity] = set()
     candidates = _boundary_candidates(tree, lines)
     ignored = _ignored_candidate_identities(candidates, lines, policy, _parents(tree))
     for candidate in candidates:
-        identity = (candidate.boundary.index, candidate.boundary.indentation)
-        ignored_key = (candidate.kind, *identity)
-        if ignored_key in ignored or not _candidate_decision(candidate, policy).allowed:
+        physical_identity = _physical_boundary_identity(candidate)
+        if (
+            _candidate_identity(candidate) in ignored
+            or not _candidate_decision(candidate, policy).allowed
+        ):
             continue
         ####
-        if identity not in seen:
-            seen.add(identity)
+        if physical_identity not in seen:
+            seen.add(physical_identity)
             boundaries.append(candidate.boundary)
         ####
     ####
@@ -616,7 +641,7 @@ def _ignored_candidate_identities(
         lines: Sequence[str],
         policy: MarkerPolicy,
         parents: Mapping[int, ast.AST],
-) -> set[tuple[BoundaryKind, int, str]]:
+) -> set[_CandidateIdentity]:
     _, ignore_next_rows, ignore_next_block_rows = _scope_marker_directives(lines)
     if not ignore_next_rows and not ignore_next_block_rows:
         return set()
@@ -633,7 +658,7 @@ def _ignored_candidate_identities(
             str(candidate.kind),
         ),
     )
-    ignored: set[tuple[BoundaryKind, int, str]] = set()
+    ignored: set[_CandidateIdentity] = set()
     for row in sorted(ignore_next_rows):
         target = next(
             (
@@ -644,9 +669,7 @@ def _ignored_candidate_identities(
             None,
         )
         if target is not None:
-            ignored.add(
-                (target.kind, target.boundary.index, target.boundary.indentation)
-            )
+            ignored.add(_candidate_identity(target))
         ####
     ####
     for row in sorted(ignore_next_block_rows):
@@ -662,7 +685,7 @@ def _ignored_candidate_identities(
             continue
         ####
         for candidate in selected:
-            if str(target.kind).startswith("clause."):
+            if _is_clause_candidate(target):
                 if not (
                         target.boundary.line_number
                         <= candidate.boundary.line_number
@@ -677,7 +700,7 @@ def _ignored_candidate_identities(
                     continue
                 ####
                 ignored.add(
-                    (candidate.kind, candidate.boundary.index, candidate.boundary.indentation)
+                    _candidate_identity(candidate)
                 )
                 continue
             ####
@@ -685,7 +708,7 @@ def _ignored_candidate_identities(
             while owner is not None:
                 if id(owner) == id(target.owner):
                     ignored.add(
-                        (candidate.kind, candidate.boundary.index, candidate.boundary.indentation)
+                        _candidate_identity(candidate)
                     )
                     break
                 ####
@@ -1106,23 +1129,23 @@ def explain_source(
         policy=policy,
     )
     explanations: list[BoundaryExplanation] = []
-    selected: dict[tuple[int, str], BoundaryKind] = {}
+    selected: dict[_PhysicalBoundaryIdentity, BoundaryKind] = {}
     candidates = _boundary_candidates(tree, lines)
     ignored = _ignored_candidate_identities(
         candidates, lines, effective_policy, _parents(tree)
     )
     for candidate in candidates:
         decision = _candidate_decision(candidate, effective_policy)
-        identity = (candidate.boundary.index, candidate.boundary.indentation)
-        if (candidate.kind, *identity) in ignored:
+        physical_identity = _physical_boundary_identity(candidate)
+        if _candidate_identity(candidate) in ignored:
             decision = PolicyDecision(False, "ignored by source directive")
         ####
-        will_mark = decision.allowed and identity not in selected
+        will_mark = decision.allowed and physical_identity not in selected
         reason = decision.reason
         if decision.allowed and not will_mark:
-            reason = f"duplicates selected {selected[identity]} boundary"
+            reason = f"duplicates selected {selected[physical_identity]} boundary"
         elif will_mark:
-            selected[identity] = candidate.kind
+            selected[physical_identity] = candidate.kind
         ####
         explanations.append(
             BoundaryExplanation(
