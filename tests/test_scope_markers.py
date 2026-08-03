@@ -2558,6 +2558,28 @@ def test_cli_validates_invalid_config_without_python_files(
 ####
 
 
+def test_cli_preflights_nested_policies_before_rewriting_any_file(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    valid = tmp_path / "valid.py"
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    invalid = nested / "invalid.py"
+    valid_source = "def valid():\n    pass\n"
+    invalid_source = "def invalid():\n    pass\n"
+    valid.write_text(valid_source, encoding="utf-8")
+    invalid.write_text(invalid_source, encoding="utf-8")
+    (nested / "scope-markers.toml").write_text(
+        'select = ["statement.unknown"]\n', encoding="utf-8"
+    )
+
+    assert cli.main(["--fix", "--quiet", str(tmp_path)]) == 2
+    assert valid.read_text(encoding="utf-8") == valid_source
+    assert invalid.read_text(encoding="utf-8") == invalid_source
+    assert "unknown selector" in capsys.readouterr().err
+####
+
+
 def test_cli_entry_point_is_registered_and_module_is_usable() -> None:
     registered = {
         entry.name: entry.value for entry in entry_points(group="console_scripts")

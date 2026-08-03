@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ._diff import render_diff, write_diff
@@ -265,6 +265,23 @@ def _report_errors(errors: Sequence[str]) -> None:
 ####
 
 
+def _preflight_policies(
+        paths: Sequence[Path], resolver: Callable[[Path], MarkerPolicy]
+) -> tuple[dict[Path, MarkerPolicy], tuple[str, ...]]:
+    """Resolve every policy before any file can be inspected or rewritten."""
+    policies: dict[Path, MarkerPolicy] = {}
+    errors: list[str] = []
+    for path in paths:
+        try:
+            policies[path] = resolver(path)
+        except PolicyError as error:
+            errors.append(format_error(path, error))
+        ####
+    ####
+    return policies, tuple(errors)
+####
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -385,15 +402,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report_errors(errors)
         return 2
     ####
+    resolved_policies: dict[Path, MarkerPolicy] = {}
     if not strip:
-        for policy_path in paths:
-            try:
-                resolved_policy(policy_path)
-            except PolicyError as error:
-                errors.append(format_error(policy_path, error))
-                _report_errors(errors)
-                return 2
-            ####
+        policy_targets = files if files else paths
+        resolved_policies, policy_errors = _preflight_policies(
+            policy_targets, resolved_policy
+        )
+        if policy_errors:
+            errors.extend(policy_errors)
+            _report_errors(errors)
+            return 2
         ####
     ####
     changed: list[Path] = []
@@ -413,7 +431,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     inspection = inspect_stripped_file(path)
                 ####
             else:
-                marker_policy = resolved_policy(path)
+                marker_policy = resolved_policies[path]
                 if include_markdown and path.suffix.casefold() in MARKDOWN_SUFFIXES:
                     inspection = inspect_markdown_file(
                         path,

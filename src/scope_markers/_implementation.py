@@ -151,17 +151,31 @@ class FileInspection:
 ####
 
 
-def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]]:
-    """Return the file opt-out and standalone ``ignore-next`` comment rows."""
-    first_content_row = next(
+def _first_content_row(lines: Sequence[str]) -> int | None:
+    return next(
         (row for row, line in enumerate(lines, start=1) if _line_body(line).strip()),
         None,
     )
-    if first_content_row is not None:
-        first_content = _line_body(lines[first_content_row - 1]).strip(" \t\f").casefold()
-        if first_content == "# scope-markers: off":
-            return True, frozenset()
-        ####
+####
+
+
+def _has_file_scope_opt_out(lines: Sequence[str], first_content_row: int | None) -> bool:
+    """Recognize the file opt-out lexically, without tokenizing the rest of the file."""
+    if first_content_row is None:
+        return False
+    ####
+    first_content = _line_body(lines[first_content_row - 1]).strip(" \t\f").casefold()
+    return first_content == "# scope-markers: off"
+####
+
+
+def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]]:
+    """Return the file opt-out and standalone ``ignore-next`` comment rows."""
+    first_content_row = _first_content_row(lines)
+    # A file-level opt-out must bypass tokenization: the opted-out source may
+    # intentionally be incomplete or otherwise invalid Python.
+    if _has_file_scope_opt_out(lines, first_content_row):
+        return True, frozenset()
     ####
     ignore_next_rows: set[int] = set()
     off_rows: set[int] = set()
