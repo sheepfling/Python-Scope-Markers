@@ -1314,10 +1314,25 @@ def test_ignore_next_skips_one_boundary_but_not_nested_scopes() -> None:
 
 
 @pytest.mark.parametrize("marker", ("##", "###", "#####"))
-def test_local_hash_marker_style_is_detected_and_preserved(marker: str) -> None:
-    source = f"def example() -> None:\n    pass\n{marker}\n"
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_local_hash_marker_style_is_detected_and_preserved(
+        marker: str, newline: str
+) -> None:
+    source = f"def example() -> None:\n    pass\n{marker}\n".replace(
+        "\n", newline
+    )
 
     assert scope_markers.format_source(source) == source
+####
+
+
+@pytest.mark.parametrize("marker", ("###", "#####"))
+def test_strip_markers_removes_local_hash_marker_style(marker: str) -> None:
+    source = f"def example() -> None:\n    pass\n{marker}\nvalue = 1\n"
+
+    assert scope_markers.strip_markers(source) == (
+        "def example() -> None:\n    pass\nvalue = 1\n"
+    )
 ####
 
 
