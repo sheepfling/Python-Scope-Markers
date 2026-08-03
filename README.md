@@ -401,10 +401,10 @@ if ready:
 ````
 
 The equivalent `# no-scope-markers` and `# scope-markers=ignore` comments are
-also accepted. The earlier `no-scope-markers`, `scope-markers: off`, and
-`scope-markers=ignore` info-string forms remain supported. Each processed
-Python fence must be valid as a standalone Python source fragment; a fence
-cannot continue a class or function from another fence.
+also accepted. Keep the opt-out as the first non-empty line inside the fence;
+the fence info string should contain only its language and ordinary metadata.
+Each processed Python fence must be valid as a standalone Python source
+fragment; a fence cannot continue a class or function from another fence.
 
 Exit statuses are stable:
 

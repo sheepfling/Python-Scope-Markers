@@ -19,10 +19,6 @@ from ._policy import MarkerPolicy
 
 PYTHON_FENCE_LANGUAGES = frozenset({"py", "python", "python3"})
 _FENCE_PATTERN = re.compile(r"^( {0,3})([`~]{3,})(.*)$")
-_FENCE_IGNORE_PATTERN = re.compile(
-    r"(?:\bno-scope-markers\b|\bscope-markers\s*[:=]\s*(?:off|ignore|false)\b)",
-    re.IGNORECASE,
-)
 _PYTHON_IGNORE_PATTERN = re.compile(
     r"^#\s*(?:no-scope-markers|scope-markers\s*[:=]\s*(?:off|ignore|false))\s*$",
     re.IGNORECASE,
@@ -143,9 +139,8 @@ def format_markdown_source(
             index = closing_index + 1
             continue
         ####
-        ignore = _FENCE_IGNORE_PATTERN.search(info) is not None
         original_payload = tuple(lines[index + 1:closing_index])
-        if ignore or _has_python_ignore_directive(
+        if _has_python_ignore_directive(
                 _remove_fence_indentation(original_payload, indentation)
         ):
             index = closing_index + 1

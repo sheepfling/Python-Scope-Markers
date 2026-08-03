@@ -154,7 +154,8 @@ def test_cli_markdown_strip_only_removes_markers_from_python_fences(
         "```text\n"
         "literal marker: ####\n"
         "```\n"
-        "```python no-scope-markers\n"
+        "```python\n"
+        "# scope-markers: off\n"
         "def opted_out():\n"
         "    pass\n"
         "####\n"
@@ -171,7 +172,8 @@ def test_cli_markdown_strip_only_removes_markers_from_python_fences(
         "```text\n"
         "literal marker: ####\n"
         "```\n"
-        "```python no-scope-markers\n"
+        "```python\n"
+        "# scope-markers: off\n"
         "def opted_out():\n"
         "    pass\n"
         "####\n"
@@ -193,11 +195,12 @@ def test_format_markdown_source_uses_the_supplied_marker_policy() -> None:
 @pytest.mark.parametrize(
     "option", ("no-scope-markers", "scope-markers: off", "scope-markers=ignore")
 )
-def test_format_markdown_source_preserves_opted_out_python_fences(option: str) -> None:
+def test_markdown_fence_info_does_not_disable_formatting(option: str) -> None:
     source = f"```python {option}\nif ready:\n    pass\n```\n"
 
-    assert api.format_markdown_source(source) == source
-    assert api.format_markdown_source(source, strip=True) == source
+    assert api.format_markdown_source(source) == (
+        f"```python {option}\nif ready:\n    pass\n####\n```\n"
+    )
 ####
 
 
