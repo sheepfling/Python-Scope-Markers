@@ -14,14 +14,20 @@ to normalize logical block indentation before markers are regenerated. Use
 Markdown, or ``process_markdown_file`` to check or rewrite one Markdown file.
 Use ``MarkerPolicy`` with ``format_source`` or the file-inspection functions
 when callers need a policy other than the compatibility-preserving default.
+Use ``resolve_policy`` to apply a TOML configuration's ordered per-file
+overrides, and ``explain_source`` or ``explain_file`` to inspect each policy
+decision without modifying source.
 """
 
 from ._implementation import (
+    BoundaryExplanation,
     FileInspection,
     ScopeBoundary,
     ScopeMarkersError,
     __version__,
     discover_python_files,
+    explain_file,
+    explain_source,
     format_source,
     inspect_file,
     inspect_stripped_file,
@@ -38,18 +44,22 @@ from ._markdown import (
 from ._policy import (
     BoundaryKind,
     MarkerPolicy,
+    PolicyDecision,
     PolicyError,
     classic_policy,
     describe_policy,
     expand_selectors,
     find_config,
     load_policy,
+    resolve_policy,
 )
 
 __all__ = (
+    "BoundaryExplanation",
     "BoundaryKind",
     "FileInspection",
     "MarkerPolicy",
+    "PolicyDecision",
     "PolicyError",
     "ScopeBoundary",
     "ScopeMarkersError",
@@ -58,6 +68,8 @@ __all__ = (
     "describe_policy",
     "discover_python_files",
     "expand_selectors",
+    "explain_file",
+    "explain_source",
     "find_config",
     "format_markdown_source",
     "format_source",
@@ -68,6 +80,7 @@ __all__ = (
     "process_file",
     "process_markdown_file",
     "python_files",
+    "resolve_policy",
     "strip_file",
     "strip_markers",
 )

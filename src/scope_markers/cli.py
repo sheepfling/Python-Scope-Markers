@@ -21,12 +21,13 @@ from ._policy import (
     describe_policy,
     find_config,
     list_selectors,
-    load_policy,
     policy_with_cli_overrides,
+    resolve_policy,
 )
 from .api import (
     __version__,
     discover_python_files,
+    explain_file,
     inspect_file,
     inspect_stripped_file,
 )
@@ -196,6 +197,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print the resolved policy for PATH and exit",
     )
     policy.add_argument(
+        "--explain",
+        type=Path,
+        metavar="PATH",
+        help="report why each candidate in one Python file will be marked or skipped",
+    )
+    policy.add_argument(
         "--list-selectors",
         action="store_true",
         help="print supported policy presets, groups, and selectors, then exit",
@@ -299,6 +306,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(list_selectors())
         return 0
     ####
+    if args.show_settings is not None and args.explain is not None:
+        parser.error("--show-settings cannot be used with --explain")
+    ####
 
     def resolved_policy(path: Path) -> MarkerPolicy:
         config = args.config
@@ -306,7 +316,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config = find_config(path)
         ####
         return policy_with_cli_overrides(
-            load_policy(config),
+            resolve_policy(config, path),
             preset=args.preset,
             select=tuple(args.select),
             extend_select=tuple(args.extend_select),
@@ -326,6 +336,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(describe_policy(resolved_policy(args.show_settings)))
         except PolicyError as error:
             parser.error(str(error))
+        ####
+        return 0
+    ####
+    if args.explain is not None:
+        if strip:
+            parser.error("--explain cannot be used with --strip")
+        ####
+        if fix or show_diff:
+            parser.error("--explain cannot be used with --fix or --diff")
+        ####
+        if include_markdown or args.explain.suffix.casefold() in MARKDOWN_SUFFIXES:
+            parser.error("--explain currently supports Python source files, not Markdown")
+        ####
+        try:
+            marker_policy = resolved_policy(args.explain)
+            explanations = explain_file(
+                    args.explain,
+                    mark_stubs=mark_stubs,
+                    indent_width=indent_width,
+                    policy=marker_policy,
+            )
+            if not explanations:
+                print(f"{args.explain}: no boundary candidates")
+            ####
+            for explanation in explanations:
+                action = "mark" if explanation.will_mark else "skip"
+                print(
+                    f"{args.explain}:{explanation.line_number}: {action} "
+                    f"{explanation.kind.value}: {explanation.reason}"
+                )
+            ####
+        except FILE_PROCESSING_ERRORS as error:
+            parser.error(format_error(args.explain, error))
         ####
         return 0
     ####

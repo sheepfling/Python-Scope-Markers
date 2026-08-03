@@ -2023,9 +2023,11 @@ def test_strip_file_returns_diagnostic_for_invalid_encoding_declaration(
 
 def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None:
     assert api.__all__ == (
+        "BoundaryExplanation",
         "BoundaryKind",
         "FileInspection",
         "MarkerPolicy",
+        "PolicyDecision",
         "PolicyError",
         "ScopeBoundary",
         "ScopeMarkersError",
@@ -2034,6 +2036,8 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
         "describe_policy",
         "discover_python_files",
         "expand_selectors",
+        "explain_file",
+        "explain_source",
         "find_config",
         "format_markdown_source",
         "format_source",
@@ -2044,6 +2048,7 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
         "process_file",
         "process_markdown_file",
         "python_files",
+        "resolve_policy",
         "strip_file",
         "strip_markers",
     )
@@ -2246,6 +2251,121 @@ def test_policy_toml_is_strict_and_can_change_cli_output(
     with pytest.raises(api.PolicyError, match="unknown selector"):
         api.load_policy(config)
     ####
+####
+
+
+def test_per_file_policy_overrides_apply_in_declaration_order(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "scope-markers.toml"
+    source = tmp_path / "src" / "module.py"
+    test_source = tmp_path / "tests" / "unit" / "module.py"
+    source.parent.mkdir()
+    test_source.parent.mkdir(parents=True)
+    source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    test_source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    config.write_text(
+        "preset = \"definitions\"\n"
+        "\n"
+        "[[per-file]]\n"
+        "patterns = [\"tests/**\"]\n"
+        "preset = \"statements\"\n"
+        "extend-select = [\"clause.if\"]\n"
+        "\n"
+        "[[per-file]]\n"
+        "patterns = [\"tests/unit/**\"]\n"
+        "ignore = [\"clause.if.body\"]\n",
+        encoding="utf-8",
+    )
+
+    source_policy = api.resolve_policy(config, source)
+    test_policy = api.resolve_policy(config, test_source)
+
+    assert source_policy.selected == api.expand_selectors(("definitions",))
+    assert api.BoundaryKind.CLAUSE_IF_ELIF in test_policy.selected
+    assert api.BoundaryKind.CLAUSE_IF_ELSE in test_policy.selected
+    assert api.BoundaryKind.CLAUSE_IF_BODY not in test_policy.selected
+    assert cli.main(["--config", str(config), "--quiet", str(source)]) == 0
+    assert cli.main(["--config", str(config), "--quiet", str(test_source)]) == 1
+    assert cli.main(["--config", str(config), "--show-settings", str(test_source)]) == 0
+    assert "clause.if.else" in capsys.readouterr().out
+####
+
+
+def test_per_file_policy_overrides_are_strict(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(
+        "[[per-file]]\n"
+        "patterns = [\"src/**\"]\n"
+        "unknown-option = true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(api.PolicyError, match="per-file override 1"):
+        api.load_policy(config)
+    ####
+
+    config.write_text("[[per-file]]\npreset = \"none\"\n", encoding="utf-8")
+    with pytest.raises(api.PolicyError, match="requires at least one pattern"):
+        api.load_policy(config)
+    ####
+####
+
+
+def test_explain_source_reports_filter_and_duplicate_decisions() -> None:
+    source = "if ready:\n    work()\nelse:\n    recover()\n"
+    all_policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+    inline_policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("statement.if",)),
+        skip_inline_suites=True,
+    )
+
+    explanations = api.explain_source(source, policy=all_policy)
+    inline_explanation = api.explain_source("if ready: work()\n", policy=inline_policy)
+
+    assert any(
+        explanation.kind is api.BoundaryKind.STATEMENT_IF
+        and explanation.will_mark
+        and explanation.reason == "selected"
+        for explanation in explanations
+    )
+    assert any(
+        explanation.kind is api.BoundaryKind.CLAUSE_IF_ELSE
+        and not explanation.will_mark
+        and explanation.reason == "duplicates selected statement.if boundary"
+        for explanation in explanations
+    )
+    assert inline_explanation[0].reason == "inline suite is skipped"
+####
+
+
+def test_cli_explain_reports_resolved_policy_decisions(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "inline.py"
+    source.write_text("if ready: work()\n", encoding="utf-8")
+
+    assert cli.main(
+        ["--select", "statement.if", "--skip-inline-suites", "--explain", str(source)]
+    ) == 0
+
+    output = capsys.readouterr().out
+    assert f"{source}:1: skip statement.if: inline suite is skipped" in output
+####
+
+
+def test_cli_rejects_explain_with_an_incompatible_operation(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "example.py"
+    source.write_text("pass\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as error:
+        cli.main(["--fix", "--explain", str(source)])
+    ####
+
+    assert error.value.code == 2
+    assert "--explain cannot be used with --fix or --diff" in capsys.readouterr().err
 ####
 
 

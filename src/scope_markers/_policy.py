@@ -6,6 +6,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from fnmatch import fnmatchcase
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, TypeVar, cast
@@ -132,6 +133,8 @@ _POLICY_KEYS: Final = frozenset(
         "rules",
     }
 )
+_CONFIG_KEYS: Final = _POLICY_KEYS | {"per-file"}
+_PER_FILE_KEYS: Final = _POLICY_KEYS | {"patterns"}
 _RULE_KEYS: Final = _POLICY_KEYS - {"preset", "select", "extend-select", "ignore", "rules"}
 _FILTER_KEYS: Final = frozenset(
     {
@@ -160,6 +163,15 @@ class RuleOverride:
     max_depth: int | None = None
     stub_policy: str | None = None
     require: frozenset[str] = frozenset()
+####
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyDecision:
+    """The result and human-readable reason for evaluating one candidate."""
+
+    allowed: bool
+    reason: str
 ####
 
 
@@ -193,43 +205,99 @@ class MarkerPolicy:
             inline_suite: bool,
     ) -> bool:
         """Return whether one fully analysed candidate should be rendered."""
+        return self.decision(
+            kind,
+            span_lines=span_lines,
+            suite_line_counts=suite_line_counts,
+            suite_statement_counts=suite_statement_counts,
+            clause_count=clause_count,
+            depth=depth,
+            facts=facts,
+            inline_suite=inline_suite,
+        ).allowed
+    ####
+
+    def decision(
+            self,
+            kind: BoundaryKind,
+            *,
+            span_lines: int,
+            suite_line_counts: tuple[int, ...],
+            suite_statement_counts: tuple[int, ...],
+            clause_count: int,
+            depth: int,
+            facts: frozenset[str],
+            inline_suite: bool,
+    ) -> PolicyDecision:
+        """Explain whether one fully analysed candidate should be rendered."""
         if kind not in self.selected:
-            return False
+            return PolicyDecision(False, "selector is not enabled")
         ####
         rule = self.rules.get(kind, RuleOverride())
         stub_policy = rule.stub_policy or self.stub_policy
         if "stub" in facts and stub_policy == "skip":
-            return False
+            return PolicyDecision(False, "stub policy skips this definition")
         ####
         if not rule.require.issubset(facts):
-            return False
+            required = ", ".join(sorted(rule.require - facts))
+            return PolicyDecision(False, f"missing required facts: {required}")
         ####
         skip_inline = _effective(rule.skip_inline_suites, self.skip_inline_suites)
         if skip_inline and inline_suite:
-            return False
+            return PolicyDecision(False, "inline suite is skipped")
         ####
-        if span_lines < _effective(rule.min_span_lines, self.min_span_lines):
-            return False
+        min_span_lines = _effective(rule.min_span_lines, self.min_span_lines)
+        if span_lines < min_span_lines:
+            return PolicyDecision(False, f"span is below min-span-lines ({min_span_lines})")
         ####
-        if max(suite_line_counts, default=0) < _effective(
-                rule.min_body_lines, self.min_body_lines
-        ):
-            return False
+        min_body_lines = _effective(rule.min_body_lines, self.min_body_lines)
+        if max(suite_line_counts, default=0) < min_body_lines:
+            return PolicyDecision(
+                False, f"body is below min-body-lines ({min_body_lines})"
+            )
         ####
-        if max(suite_statement_counts, default=0) < _effective(
-                rule.min_body_statements, self.min_body_statements
-        ):
-            return False
+        min_body_statements = _effective(
+            rule.min_body_statements, self.min_body_statements
+        )
+        if max(suite_statement_counts, default=0) < min_body_statements:
+            return PolicyDecision(
+                False,
+                f"body is below min-body-statements ({min_body_statements})",
+            )
         ####
-        if clause_count < _effective(rule.min_clauses, self.min_clauses):
-            return False
+        min_clauses = _effective(rule.min_clauses, self.min_clauses)
+        if clause_count < min_clauses:
+            return PolicyDecision(False, f"has fewer than min-clauses ({min_clauses})")
         ####
-        if depth < _effective(rule.min_depth, self.min_depth):
-            return False
+        min_depth = _effective(rule.min_depth, self.min_depth)
+        if depth < min_depth:
+            return PolicyDecision(False, f"depth is below min-depth ({min_depth})")
         ####
         max_depth = _effective(rule.max_depth, self.max_depth)
-        return max_depth is None or depth <= max_depth
+        if max_depth is not None and depth > max_depth:
+            return PolicyDecision(False, f"depth exceeds max-depth ({max_depth})")
+        ####
+        return PolicyDecision(True, "selected")
     ####
+####
+
+
+@dataclass(frozen=True, slots=True)
+class _PerFileOverride:
+    """One ordered TOML override resolved relative to its configuration file."""
+
+    patterns: tuple[str, ...]
+    settings: Mapping[str, object]
+####
+
+
+@dataclass(frozen=True, slots=True)
+class _PolicyConfiguration:
+    """A base policy and the per-file overrides loaded from one TOML file."""
+
+    policy: MarkerPolicy
+    directory: Path
+    overrides: tuple[_PerFileOverride, ...]
 ####
 
 
@@ -298,24 +366,9 @@ def selector_values(values: tuple[str, ...]) -> tuple[str, ...]:
 
 def policy_from_mapping(settings: Mapping[str, object]) -> MarkerPolicy:
     """Build a strict policy from a ``[tool.scope-markers]`` TOML table."""
-    unknown = set(settings) - _POLICY_KEYS
-    if unknown:
-        raise PolicyError(f"unknown scope-markers setting: {min(unknown)!r}")
-    ####
-    preset = _string(settings, "preset", "classic")
-    if preset not in PRESETS:
-        raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
-    ####
-    selected = PRESETS[preset]
-    if "select" in settings:
-        selected = expand_selectors(_string_array(settings, "select"))
-    ####
-    selected = selected | expand_selectors(_string_array(settings, "extend-select"))
-    selected = selected - expand_selectors(_string_array(settings, "ignore"))
-    policy = MarkerPolicy(selected=selected)
-    policy = _replace_filters(policy, settings)
-    rules = _rules_from_mapping(settings.get("rules"))
-    return replace(policy, rules=MappingProxyType(rules))
+    _validate_settings(settings, _CONFIG_KEYS, "scope-markers setting")
+    _per_file_overrides(settings)
+    return _apply_settings(classic_policy(), settings)
 ####
 
 
@@ -372,8 +425,26 @@ def policy_with_cli_overrides(
 
 def load_policy(config: Path | None) -> MarkerPolicy:
     """Load one explicit TOML configuration file or return the classic policy."""
+    return _load_configuration(config).policy
+####
+
+
+def resolve_policy(config: Path | None, path: Path) -> MarkerPolicy:
+    """Resolve one configuration's ordered per-file overrides for ``path``."""
+    configuration = _load_configuration(config)
+    policy = configuration.policy
+    for override in configuration.overrides:
+        if _matches_per_file_pattern(path, configuration.directory, override.patterns):
+            policy = _apply_settings(policy, override.settings)
+        ####
+    ####
+    return policy
+####
+
+
+def _load_configuration(config: Path | None) -> _PolicyConfiguration:
     if config is None:
-        return classic_policy()
+        return _PolicyConfiguration(classic_policy(), Path.cwd(), ())
     ####
     try:
         with config.open("rb") as stream:
@@ -386,19 +457,103 @@ def load_policy(config: Path | None) -> MarkerPolicy:
         project = _table(document, f"{config} root")
         tool = project.get("tool")
         if tool is None:
-            return classic_policy()
+            return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
         ####
         settings = _table(tool, f"{config} tool table").get("scope-markers")
     else:
         settings = document
     ####
     if settings is None:
-        return classic_policy()
+        return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
     ####
     try:
-        return policy_from_mapping(_table(settings, f"{config} scope-markers settings"))
+        table = _table(settings, f"{config} scope-markers settings")
+        return _PolicyConfiguration(
+            policy_from_mapping(table),
+            config.resolve().parent,
+            _per_file_overrides(table),
+        )
     except PolicyError as error:
         raise PolicyError(f"{config}: {error}") from error
+    ####
+####
+
+
+def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> MarkerPolicy:
+    if "preset" in settings:
+        preset = _string(settings, "preset", "classic")
+        if preset not in PRESETS:
+            raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
+        ####
+        policy = replace(policy, selected=PRESETS[preset])
+    ####
+    if "select" in settings:
+        policy = replace(policy, selected=expand_selectors(_string_array(settings, "select")))
+    ####
+    selected = policy.selected | expand_selectors(_string_array(settings, "extend-select"))
+    selected = selected - expand_selectors(_string_array(settings, "ignore"))
+    policy = _replace_filters(replace(policy, selected=selected), settings)
+    if "rules" not in settings:
+        return policy
+    ####
+    rules = dict(policy.rules)
+    rules.update(_rules_from_mapping(settings["rules"]))
+    return replace(policy, rules=MappingProxyType(rules))
+####
+
+
+def _per_file_overrides(settings: Mapping[str, object]) -> tuple[_PerFileOverride, ...]:
+    raw = settings.get("per-file")
+    if raw is None:
+        return ()
+    ####
+    if not isinstance(raw, list):
+        raise PolicyError("per-file must be an array of tables")
+    ####
+    overrides: list[_PerFileOverride] = []
+    for index, item in enumerate(cast(list[object], raw), start=1):
+        table = _table(item, f"per-file override {index}")
+        _validate_settings(table, _PER_FILE_KEYS, f"per-file override {index} setting")
+        patterns = _string_array(table, "patterns")
+        if not patterns:
+            raise PolicyError(f"per-file override {index} requires at least one pattern")
+        ####
+        overrides.append(
+            _PerFileOverride(
+                patterns=patterns,
+                settings=MappingProxyType(
+                    {key: value for key, value in table.items() if key != "patterns"}
+                ),
+            )
+        )
+    ####
+    return tuple(overrides)
+####
+
+
+def _matches_per_file_pattern(path: Path, directory: Path, patterns: tuple[str, ...]) -> bool:
+    resolved = path.resolve(strict=False)
+    try:
+        relative = resolved.relative_to(directory).as_posix()
+    except ValueError:
+        relative = None
+    ####
+    candidates = (path.name, resolved.as_posix())
+    if relative is not None:
+        candidates += (relative,)
+    ####
+    return any(
+        fnmatchcase(candidate, pattern) for candidate in candidates for pattern in patterns
+    )
+####
+
+
+def _validate_settings(
+        settings: Mapping[str, object], allowed: frozenset[str], description: str
+) -> None:
+    unknown = set(settings) - allowed
+    if unknown:
+        raise PolicyError(f"unknown {description}: {min(unknown)!r}")
     ####
 ####
 

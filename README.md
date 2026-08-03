@@ -183,6 +183,14 @@ min-body-lines = 1
 
 [tool.scope-markers.rules."statement.if"]
 require = ["has-else"]
+
+[[tool.scope-markers.per-file]]
+patterns = ["tests/**"]
+extend-select = ["clause.match.case"]
+
+[[tool.scope-markers.per-file]]
+patterns = ["tests/unit/**"]
+min-body-lines = 1
 ```
 
 The supported global filters are `skip-inline-suites`, `min-span-lines`,
@@ -193,11 +201,18 @@ values for settings it does not specify. Initial rule predicates are
 `has-elif`/`has-else` for `statement.if`, `multiple-handlers`/`has-finally` for
 `statement.try`, and `multiple-cases` for `statement.match`.
 
+Each `[[tool.scope-markers.per-file]]` table requires one or more `patterns`.
+Patterns are matched relative to the configuration file (and also against the
+basename and absolute path). Matching tables are applied in declaration order;
+later settings replace earlier settings, while `extend-select` and `ignore`
+remain additive and subtractive respectively.
+
 The CLI finds the nearest `scope-markers.toml`, `.scope-markers.toml`, or
 `pyproject.toml` containing `[tool.scope-markers]` for each processed file.
 Use `--config PATH` to force one file, `--isolated` to ignore discovered
 configuration, or `--show-settings PATH` to inspect the resolved policy.
-Command-line policy options override configuration:
+Use `--explain PATH` to see every Python-source candidate and why it will be
+marked or skipped. Command-line policy options override configuration:
 
 ```bash
 scope-markers --preset definitions src
@@ -206,6 +221,7 @@ scope-markers --preset classic --ignore clause.match.case src
 scope-markers --select statement.if --min-body-lines 2 src
 scope-markers --select clause.if src
 scope-markers --select clause.if.else src
+scope-markers --explain src/example.py
 ```
 
 `statement.*` selectors close a complete compound statement. `clause.*`

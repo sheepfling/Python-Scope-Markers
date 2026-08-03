@@ -20,7 +20,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Final, cast
 
-from ._policy import BoundaryKind, MarkerPolicy, PolicyError, classic_policy
+from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, PolicyError, classic_policy
 
 try:
     __version__ = package_version("scope-markers")
@@ -104,6 +104,18 @@ class ScopeBoundary:
     indentation: str
     indentation_width: int
     line_number: int
+####
+
+
+@dataclass(frozen=True, slots=True)
+class BoundaryExplanation:
+    """One candidate boundary and the policy decision made for it."""
+
+    kind: BoundaryKind
+    line_number: int
+    insertion_line: int
+    will_mark: bool
+    reason: str
 ####
 
 
@@ -555,6 +567,23 @@ def _scope_boundaries(
         *,
         policy: MarkerPolicy,
 ) -> list[ScopeBoundary]:
+    boundaries: list[ScopeBoundary] = []
+    seen: set[tuple[int, str]] = set()
+    for candidate in _boundary_candidates(tree, lines):
+        if not _candidate_decision(candidate, policy).allowed:
+            continue
+        ####
+        identity = (candidate.boundary.index, candidate.boundary.indentation)
+        if identity not in seen:
+            seen.add(identity)
+            boundaries.append(candidate.boundary)
+        ####
+    ####
+    return boundaries
+####
+
+
+def _boundary_candidates(tree: ast.AST, lines: Sequence[str]) -> list[_BoundaryCandidate]:
     parents = _parents(tree)
     nodes = _compound_nodes(tree, lines)
     case_header_lines = _match_case_header_lines(lines)
@@ -594,28 +623,23 @@ def _scope_boundaries(
             ####
         ####
     ####
-    boundaries: list[ScopeBoundary] = []
-    seen: set[tuple[int, str]] = set()
-    for candidate in candidates:
-        if not policy.allows(
-                candidate.kind,
-                span_lines=candidate.span_lines,
-                suite_line_counts=candidate.suite_line_counts,
-                suite_statement_counts=candidate.suite_statement_counts,
-                clause_count=candidate.clause_count,
-                depth=candidate.depth,
-                facts=candidate.facts,
-                inline_suite=candidate.inline_suite,
-        ):
-            continue
-        ####
-        identity = (candidate.boundary.index, candidate.boundary.indentation)
-        if identity not in seen:
-            seen.add(identity)
-            boundaries.append(candidate.boundary)
-        ####
-    ####
-    return boundaries
+    return candidates
+####
+
+
+def _candidate_decision(
+        candidate: _BoundaryCandidate, policy: MarkerPolicy
+) -> PolicyDecision:
+    return policy.decision(
+        candidate.kind,
+        span_lines=candidate.span_lines,
+        suite_line_counts=candidate.suite_line_counts,
+        suite_statement_counts=candidate.suite_statement_counts,
+        clause_count=candidate.clause_count,
+        depth=candidate.depth,
+        facts=candidate.facts,
+        inline_suite=candidate.inline_suite,
+    )
 ####
 
 
@@ -907,18 +931,14 @@ def format_source(
         policy: MarkerPolicy | None = None,
 ) -> str:
     """Return source with canonical markers after supported compound statements."""
-    if indent_width is not None:
-        source = _reindent_source(source, indent_width)
-    ####
-    marker = _detect_marker_style(source)
-    clean_source = _without_markers(source, marker)
-    tree = ast.parse(clean_source, filename=filename)
-    lines = _physical_lines(clean_source)
+    source, clean_source, tree, lines, marker, effective_policy = _prepare_source(
+        source,
+        filename=filename,
+        mark_stubs=mark_stubs,
+        indent_width=indent_width,
+        policy=policy,
+    )
     default_newline = _preferred_newline(clean_source or source)
-    effective_policy = policy or classic_policy(mark_stubs=mark_stubs)
-    if mark_stubs and policy is not None and policy.stub_policy == "skip":
-        effective_policy = replace(policy, stub_policy="mark")
-    ####
     insertions: dict[int, list[ScopeBoundary]] = {}
     for boundary in _scope_boundaries(tree, lines, policy=effective_policy):
         insertions.setdefault(boundary.index, []).append(boundary)
@@ -942,6 +962,71 @@ def format_source(
         raise ScopeMarkersError("scope-marker formatting changed the Python AST")
     ####
     return formatted
+####
+
+
+def explain_source(
+        source: str,
+        *,
+        filename: str = "<unknown>",
+        mark_stubs: bool = False,
+        indent_width: int | None = None,
+        policy: MarkerPolicy | None = None,
+) -> tuple[BoundaryExplanation, ...]:
+    """Explain every candidate boundary for an in-memory Python source string."""
+    _, _, tree, lines, _, effective_policy = _prepare_source(
+        source,
+        filename=filename,
+        mark_stubs=mark_stubs,
+        indent_width=indent_width,
+        policy=policy,
+    )
+    explanations: list[BoundaryExplanation] = []
+    selected: dict[tuple[int, str], BoundaryKind] = {}
+    for candidate in _boundary_candidates(tree, lines):
+        decision = _candidate_decision(candidate, effective_policy)
+        identity = (candidate.boundary.index, candidate.boundary.indentation)
+        will_mark = decision.allowed and identity not in selected
+        reason = decision.reason
+        if decision.allowed and not will_mark:
+            reason = f"duplicates selected {selected[identity].value} boundary"
+        elif will_mark:
+            selected[identity] = candidate.kind
+        ####
+        explanations.append(
+            BoundaryExplanation(
+                kind=candidate.kind,
+                line_number=candidate.boundary.line_number,
+                insertion_line=candidate.boundary.index + 1,
+                will_mark=will_mark,
+                reason=reason,
+            )
+        )
+    ####
+    return tuple(explanations)
+####
+
+
+def _prepare_source(
+        source: str,
+        *,
+        filename: str,
+        mark_stubs: bool,
+        indent_width: int | None,
+        policy: MarkerPolicy | None,
+) -> tuple[str, str, ast.AST, list[str], str, MarkerPolicy]:
+    if indent_width is not None:
+        source = _reindent_source(source, indent_width)
+    ####
+    marker = _detect_marker_style(source)
+    clean_source = _without_markers(source, marker)
+    tree = ast.parse(clean_source, filename=filename)
+    lines = _physical_lines(clean_source)
+    effective_policy = policy or classic_policy(mark_stubs=mark_stubs)
+    if mark_stubs and policy is not None and policy.stub_policy == "skip":
+        effective_policy = replace(policy, stub_policy="mark")
+    ####
+    return source, clean_source, tree, lines, marker, effective_policy
 ####
 
 
@@ -1678,6 +1763,25 @@ def inspect_file(
         policy=policy,
     )
     return FileInspection(path=path, source=source, formatted=formatted, encoding=encoding)
+####
+
+
+def explain_file(
+        path: Path,
+        *,
+        mark_stubs: bool = False,
+        indent_width: int | None = None,
+        policy: MarkerPolicy | None = None,
+) -> tuple[BoundaryExplanation, ...]:
+    """Read one Python file and explain every marker-boundary decision."""
+    source, _ = _read_source(path)
+    return explain_source(
+        source,
+        filename=str(path),
+        mark_stubs=mark_stubs,
+        indent_width=indent_width,
+        policy=policy,
+    )
 ####
 
 
