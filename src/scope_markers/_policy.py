@@ -335,6 +335,17 @@ class _PolicyConfiguration:
 ####
 
 
+@dataclass(frozen=True, slots=True)
+class _SelectionState:
+    """The atomic result of applying preset and selector settings."""
+
+    selected: frozenset[BoundaryKind]
+    selector_extensions: frozenset[BoundaryKind]
+    selector_exclusions: frozenset[BoundaryKind]
+    final_case_only: bool
+####
+
+
 def _effective(override: _Setting | None, default: _Setting) -> _Setting:
     return default if override is None else override
 ####
@@ -346,6 +357,53 @@ def statements_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
         selected=STATEMENTS_BOUNDARY_KINDS,
         stub_policy="mark" if mark_stubs else "skip",
         final_case_only=True,
+    )
+####
+
+
+def _selection_state(
+        policy: MarkerPolicy,
+        *,
+        preset: str | None,
+        select: tuple[str, ...] | None,
+        extend_select: tuple[str, ...],
+        ignore: tuple[str, ...],
+        reset_preset_arithmetic: bool,
+        reset_select_arithmetic: bool,
+) -> _SelectionState:
+    """Resolve selector layers and preset-only constraints as one transition."""
+    base_selection = policy.selected
+    extensions = policy.selector_extensions
+    exclusions = policy.selector_exclusions
+    final_case_only = policy.final_case_only
+    if preset is not None:
+        if preset not in PRESETS:
+            raise PolicyError(
+                f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}"
+            )
+        ####
+        base_selection = PRESETS[preset]
+        final_case_only = preset in FINAL_CASE_ONLY_PRESETS
+        if reset_preset_arithmetic:
+            extensions = frozenset[BoundaryKind]()
+            exclusions = frozenset[BoundaryKind]()
+        ####
+    ####
+    if select is not None:
+        base_selection = expand_selectors(select)
+        final_case_only = False
+        if reset_select_arithmetic:
+            extensions = frozenset[BoundaryKind]()
+            exclusions = frozenset[BoundaryKind]()
+        ####
+    ####
+    extensions |= expand_selectors(extend_select)
+    exclusions |= expand_selectors(ignore)
+    return _SelectionState(
+        selected=(base_selection | extensions) - exclusions,
+        selector_extensions=extensions,
+        selector_exclusions=exclusions,
+        final_case_only=final_case_only,
     )
 ####
 
@@ -426,35 +484,22 @@ def policy_with_cli_overrides(
         mark_stubs: bool = False,
 ) -> MarkerPolicy:
     """Apply command-line policy values after TOML settings."""
-    extensions: frozenset[BoundaryKind] = policy.selector_extensions
-    exclusions: frozenset[BoundaryKind] = policy.selector_exclusions
-    base_selection = policy.selected
+    selection = _selection_state(
+        policy,
+        preset=preset,
+        select=selector_values(select) if select else None,
+        extend_select=selector_values(extend_select),
+        ignore=selector_values(ignore),
+        reset_preset_arithmetic=True,
+        reset_select_arithmetic=True,
+    )
     rules = dict(policy.rules)
-    final_case_only = policy.final_case_only
-    if preset is not None:
-        if preset not in PRESETS:
-            raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
-        ####
-        base_selection = PRESETS[preset]
-        extensions = frozenset[BoundaryKind]()
-        exclusions = frozenset[BoundaryKind]()
-        final_case_only = preset in FINAL_CASE_ONLY_PRESETS
-    ####
-    if select:
-        base_selection = expand_selectors(selector_values(select))
-        extensions = frozenset[BoundaryKind]()
-        exclusions = frozenset[BoundaryKind]()
-        final_case_only = False
-    ####
-    extensions |= expand_selectors(selector_values(extend_select))
-    exclusions |= expand_selectors(selector_values(ignore))
-    selected = (base_selection | extensions) - exclusions
     values: dict[str, object] = {
-        "selected": selected,
-        "selector_extensions": extensions,
-        "selector_exclusions": exclusions,
+        "selected": selection.selected,
+        "selector_extensions": selection.selector_extensions,
+        "selector_exclusions": selection.selector_exclusions,
         "rules": MappingProxyType(rules),
-        "final_case_only": final_case_only,
+        "final_case_only": selection.final_case_only,
     }
     for key, value in (
             ("skip_inline_suites", skip_inline_suites),
@@ -535,34 +580,30 @@ def _load_configuration(config: Path | None) -> _PolicyConfiguration:
 
 
 def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> MarkerPolicy:
-    extensions = policy.selector_extensions
-    exclusions = policy.selector_exclusions
-    base_selection = policy.selected
+    selection = _selection_state(
+        policy,
+        preset=(
+            _string(settings, "preset", "statements")
+            if "preset" in settings
+            else None
+        ),
+        select=(
+            _string_array(settings, "select") if "select" in settings else None
+        ),
+        extend_select=_string_array(settings, "extend-select"),
+        ignore=_string_array(settings, "ignore"),
+        reset_preset_arithmetic=False,
+        reset_select_arithmetic=False,
+    )
     rules = dict(policy.rules)
-    final_case_only = policy.final_case_only
-    if "preset" in settings:
-        preset = _string(settings, "preset", "statements")
-        if preset not in PRESETS:
-            raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
-        ####
-        base_selection = PRESETS[preset]
-        final_case_only = preset in FINAL_CASE_ONLY_PRESETS
-    ####
-    if "select" in settings:
-        base_selection = expand_selectors(_string_array(settings, "select"))
-        final_case_only = False
-    ####
-    extensions |= expand_selectors(_string_array(settings, "extend-select"))
-    exclusions |= expand_selectors(_string_array(settings, "ignore"))
-    selected = (base_selection | extensions) - exclusions
     policy = _replace_filters(
         replace(
             policy,
-            selected=selected,
-            selector_extensions=extensions,
-            selector_exclusions=exclusions,
+            selected=selection.selected,
+            selector_extensions=selection.selector_extensions,
+            selector_exclusions=selection.selector_exclusions,
             rules=MappingProxyType(rules),
-            final_case_only=final_case_only,
+            final_case_only=selection.final_case_only,
         ),
         settings,
     )
