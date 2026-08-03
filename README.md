@@ -46,6 +46,12 @@ A marker's indentation identifies the statement it closes. Unlike `# end if` or
 Markers removes recognized managed markers and regenerates their canonical placement from
 parsed source.
 
+`####` is the default marker style. For compatibility with an existing file, a standalone
+run of two or more hash characters such as `###` or `#####` establishes that file's local
+style, which formatting preserves. Hash comments containing text, such as `### section`,
+are ordinary comments. Mixing standalone styles in one file is rejected so the boundary
+convention remains unambiguous.
+
 This is a project convention, not a claim about universal Python style. Use it where
 visible closing boundaries make code easier for your team to scan.
 

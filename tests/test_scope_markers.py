@@ -1258,7 +1258,7 @@ def test_existing_misplaced_and_duplicate_markers_are_canonicalized() -> None:
 
 def test_marker_like_comments_are_not_owned_by_the_formatter() -> None:
     source = (
-        "#####\n"
+        "##### heading\n"
         "#### explanation\n"
         "value = 1  # ####\n"
         "def example() -> None:\n"
@@ -1267,7 +1267,7 @@ def test_marker_like_comments_are_not_owned_by_the_formatter() -> None:
 
     formatted = scope_markers.format_source(source)
 
-    assert "#####\n" in formatted
+    assert "##### heading\n" in formatted
     assert "#### explanation\n" in formatted
     assert "value = 1  # ####\n" in formatted
     assert formatted.count("\n####\n") == 1
@@ -1313,10 +1313,20 @@ def test_ignore_next_skips_one_boundary_but_not_nested_scopes() -> None:
 ####
 
 
-def test_two_hash_marker_style_is_detected_and_preserved() -> None:
-    source = "def example() -> None:\n    pass\n##\n"
+@pytest.mark.parametrize("marker", ("##", "###", "#####"))
+def test_local_hash_marker_style_is_detected_and_preserved(marker: str) -> None:
+    source = f"def example() -> None:\n    pass\n{marker}\n"
 
-    assert scope_markers.format_source(source) == "def example() -> None:\n    pass\n##\n"
+    assert scope_markers.format_source(source) == source
+####
+
+
+def test_hash_comment_with_text_is_not_a_marker_style() -> None:
+    source = "def example() -> None:\n    pass\n### section\n"
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted.endswith("####\n### section\n")
 ####
 
 

@@ -29,10 +29,10 @@ except PackageNotFoundError:
 ####
 
 
-# ``####`` is the documented default; existing standalone markers can select
-# ``##`` or ``####`` for compatibility with an already-formatted source tree.
+# ``####`` is the documented default. A file may instead establish another
+# standalone run of two or more ``#`` characters as its local marker style.
 MARKER: Final = "####"
-MARKER_STYLES: Final = ("##", "####")
+MIN_MARKER_LENGTH: Final = 2
 MARKDOWN_SUFFIXES: Final = frozenset({".md", ".markdown"})
 # These are generated, cached, or environment-managed trees that should not
 # be traversed by default. The CLI exposes --no-default-excludes when needed.
@@ -268,17 +268,21 @@ def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
 ####
 
 
-def _marker_lines_from_tokens(
-        tokens: Iterable[tokenize.TokenInfo], lines: Sequence[str], marker: str
-) -> set[int]:
-    marker_lines: set[int] = set()
+def _marker_styles_from_tokens(
+        tokens: Iterable[tokenize.TokenInfo], lines: Sequence[str]
+) -> dict[str, set[int]]:
+    marker_lines: dict[str, set[int]] = {}
     for token in tokens:
-        if token.type != tokenize.COMMENT or token.string.rstrip(" \t\f") != marker:
+        if token.type != tokenize.COMMENT:
+            continue
+        ####
+        marker = token.string.rstrip(" \t\f")
+        if len(marker) < MIN_MARKER_LENGTH or set(marker) != {"#"}:
             continue
         ####
         row = token.start[0]
         if 1 <= row <= len(lines) and _line_body(lines[row - 1]).strip(" \t\f") == marker:
-            marker_lines.add(row - 1)
+            marker_lines.setdefault(marker, set()).add(row - 1)
         ####
     ####
     return marker_lines
@@ -313,19 +317,24 @@ def _indentation_safe_source(source: str) -> str:
 
 
 def _standalone_marker_lines(source: str, marker: str) -> set[int]:
+    return _standalone_marker_styles(source).get(marker, set())
+####
+
+
+def _standalone_marker_styles(source: str) -> dict[str, set[int]]:
     lines = physical_lines(source)
     try:
-        return _marker_lines_from_tokens(_token_stream(source), lines, marker)
+        return _marker_styles_from_tokens(_token_stream(source), lines)
     except IndentationError:
-        return _marker_lines_from_tokens(
-            _token_stream(_indentation_safe_source(source)), lines, marker
+        return _marker_styles_from_tokens(
+            _token_stream(_indentation_safe_source(source)), lines
         )
     ####
 ####
 
 
 def _detect_marker_style(source: str) -> str:
-    styles = {marker for marker in MARKER_STYLES if _standalone_marker_lines(source, marker)}
+    styles = set(_standalone_marker_styles(source))
     if len(styles) > 1:
         found = ", ".join(sorted(styles))
         raise ScopeMarkersError(
@@ -349,10 +358,11 @@ def _without_markers(source: str, marker: str) -> str:
 
 def strip_markers(source: str) -> str:
     """Remove every standalone recognized scope-marker comment from source."""
-    marker_lines: set[int] = set()
-    for marker in MARKER_STYLES:
-        marker_lines.update(_standalone_marker_lines(source, marker))
-    ####
+    marker_lines = {
+        line_number
+        for lines in _standalone_marker_styles(source).values()
+        for line_number in lines
+    }
     if not marker_lines:
         return source
     ####
