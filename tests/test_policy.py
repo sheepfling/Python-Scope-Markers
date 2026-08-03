@@ -6,6 +6,23 @@ import pytest
 
 from scope_markers import api, cli
 
+_TIER_SOURCE = (
+    "def standalone() -> None:\n"
+    "    pass\n"
+    "class Example:\n"
+    "    def method(self) -> None:\n"
+    "        pass\n"
+    "if ready:\n"
+    "    work()\n"
+    "else:\n"
+    "    recover()\n"
+    "match value:\n"
+    "    case 1:\n"
+    "        one()\n"
+    "    case _:\n"
+    "        other()\n"
+)
+
 
 @pytest.mark.parametrize(
     "preset", ("none", "definitions", "logic", "statements", "all")
@@ -125,28 +142,11 @@ def test_preset_tiers_have_distinct_boundary_density(
 ) -> None:
     config = tmp_path / "scope-markers.toml"
     config.write_text(f'preset = "{preset}"\n', encoding="utf-8")
-    source = (
-        "def standalone() -> None:\n"
-        "    pass\n"
-        "class Example:\n"
-        "    def method(self) -> None:\n"
-        "        pass\n"
-        "if ready:\n"
-        "    work()\n"
-        "else:\n"
-        "    recover()\n"
-        "match value:\n"
-        "    case 1:\n"
-        "        one()\n"
-        "    case _:\n"
-        "        other()\n"
-    )
-
     policy = api.load_policy(config)
-    explanations = api.explain_source(source, policy=policy)
+    explanations = api.explain_source(_TIER_SOURCE, policy=policy)
     marked_kinds = {explanation.kind for explanation in explanations if explanation.will_mark}
 
-    assert api.format_source(source, policy=policy).count("####") == marker_count
+    assert api.format_source(_TIER_SOURCE, policy=policy).count("####") == marker_count
     if preset == "definitions":
         assert marked_kinds == {
             api.BoundaryKind.STATEMENT_FUNCTION,
@@ -173,6 +173,69 @@ def test_preset_tiers_have_distinct_boundary_density(
             ]
         ) == 2
     ####
+####
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected_selectors", "marker_count"),
+    (
+        (
+            'preset = "definitions"\n'
+            'extend-select = ["statement.if"]\n',
+            api.expand_selectors(("definitions", "statement.if")),
+            4,
+        ),
+        (
+            'preset = "logic"\n'
+            'extend-select = ["statement.method"]\n',
+            api.expand_selectors(("logic", "statement.method")),
+            4,
+        ),
+        (
+            'preset = "statements"\n'
+            'ignore = ["statement.method"]\n',
+            api.expand_selectors(("statements",)) - {
+                api.BoundaryKind.STATEMENT_METHOD
+            },
+            5,
+        ),
+        (
+            'preset = "all"\n'
+            'ignore = ["clause.if", "clause.match.case"]\n',
+            api.expand_selectors(("all",))
+            - api.expand_selectors(("clause.if", "clause.match.case")),
+            5,
+        ),
+        (
+            'select = ["statement.method"]\n',
+            api.expand_selectors(("statement.method",)),
+            1,
+        ),
+        (
+            'select = ["clause.match.case"]\n',
+            api.expand_selectors(("clause.match.case",)),
+            2,
+        ),
+        (
+            'select = ["all"]\n',
+            api.expand_selectors(("all",)),
+            8,
+        ),
+    ),
+)
+def test_selector_composition_matrix(
+        settings: str,
+        expected_selectors: frozenset[api.BoundaryKind],
+        marker_count: int,
+        tmp_path: Path,
+) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(settings, encoding="utf-8")
+
+    policy = api.load_policy(config)
+
+    assert policy.selected == expected_selectors
+    assert api.format_source(_TIER_SOURCE, policy=policy).count("####") == marker_count
 ####
 
 
