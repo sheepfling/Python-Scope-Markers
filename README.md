@@ -15,6 +15,8 @@ It can also format Python code inside Markdown fences.
 
 Scope Markers is deterministic, idempotent, reversible with `--strip`, and guarded by an
 AST-equivalence check. Its markers are ordinary Python comments and have no runtime effect.
+The recommended default is the `classic` preset: it closes complete compound statements
+and adds one marker for the final `match` case before the enclosing `match` marker.
 
 ## What it does
 
@@ -121,10 +123,11 @@ The built-in presets cover the common policies:
 | `none` | No generated markers |
 | `definitions` | Complete functions and classes |
 | `statements` | Every complete compound statement, without internal clauses |
-| `classic` | Complete compound statements plus the final `match case` |
+| `classic` (recommended) | Complete compound statements plus the final `match case` |
 | `all` | Every supported statement and clause boundary |
 
-`classic` is the default and preserves the original Scope Markers convention.
+`classic` is the default and recommended preset for a clear, low-noise boundary convention.
+Use `all` when you also want markers after intermediate branches and every `match` case.
 
 ```bash
 scope-markers --preset definitions --fix src
