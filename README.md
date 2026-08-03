@@ -161,7 +161,8 @@ This avoids a separate boolean option for every Python statement form.
 
 | Selector             | Boundary                                        |
 |----------------------|-------------------------------------------------|
-| `statement.function` | Complete `def` or `async def`                   |
+| `statement.function` | Complete standalone or nested `def` / `async def` |
+| `statement.method`   | Complete `def` or `async def` directly in a class |
 | `statement.class`    | Complete `class`                                |
 | `statement.if`       | Complete `if` / `elif` / `else` chain           |
 | `statement.for`      | Complete `for` or `async for`, including `else` |

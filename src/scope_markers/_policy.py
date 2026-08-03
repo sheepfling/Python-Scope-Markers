@@ -25,6 +25,7 @@ class BoundaryKind(StrEnum):
     """A supported kind of marker boundary."""
 
     STATEMENT_FUNCTION = "statement.function"
+    STATEMENT_METHOD = "statement.method"
     STATEMENT_CLASS = "statement.class"
     STATEMENT_IF = "statement.if"
     STATEMENT_FOR = "statement.for"
@@ -64,6 +65,7 @@ STATEMENTS_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
 DEFINITION_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     {
         BoundaryKind.STATEMENT_FUNCTION,
+        BoundaryKind.STATEMENT_METHOD,
         BoundaryKind.STATEMENT_CLASS,
     }
 )

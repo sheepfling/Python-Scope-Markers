@@ -2529,7 +2529,10 @@ def test_policy_toml_is_strict_and_can_change_cli_output(
     )
     assert cli.main(["--config", str(config), "--quiet", str(source)]) == 0
     assert cli.main(["--config", str(config), "--show-settings", str(source)]) == 0
-    assert "select = [statement.class, statement.function]" in capsys.readouterr().out
+    assert (
+        "select = [statement.class, statement.function, statement.method]"
+        in capsys.readouterr().out
+    )
 
     config.write_text('select = ["statement.iff"]\n', encoding="utf-8")
     with pytest.raises(api.PolicyError, match="unknown selector"):

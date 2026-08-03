@@ -75,6 +75,42 @@ def test_logic_preset_marks_control_flow_without_definitions(tmp_path: Path) -> 
 ####
 
 
+def test_method_selector_distinguishes_class_methods_from_functions() -> None:
+    source = (
+        "def standalone() -> None:\n"
+        "    pass\n"
+        "class Example:\n"
+        "    def method(self) -> None:\n"
+        "        pass\n"
+    )
+    function_policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("statement.function",))
+    )
+    method_policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("statement.method",))
+    )
+
+    function_kinds = tuple(
+        explanation.kind
+        for explanation in api.explain_source(source, policy=function_policy)
+        if explanation.will_mark
+    )
+    method_kinds = tuple(
+        explanation.kind
+        for explanation in api.explain_source(source, policy=method_policy)
+        if explanation.will_mark
+    )
+
+    assert function_kinds == (api.BoundaryKind.STATEMENT_FUNCTION,)
+    assert method_kinds == (api.BoundaryKind.STATEMENT_METHOD,)
+    assert api.expand_selectors(("definitions",)) >= {
+        api.BoundaryKind.STATEMENT_FUNCTION,
+        api.BoundaryKind.STATEMENT_METHOD,
+        api.BoundaryKind.STATEMENT_CLASS,
+    }
+####
+
+
 def test_statements_preset_combines_final_case_constraint_with_rule_filters(
         tmp_path: Path,
 ) -> None:

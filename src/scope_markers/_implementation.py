@@ -1269,8 +1269,13 @@ def _clause_boundary(
 ####
 
 
-def _compound_kind(node: ast.stmt) -> BoundaryKind:
+def _compound_kind(
+        node: ast.stmt, parents: Mapping[int, ast.AST]
+) -> BoundaryKind:
     if isinstance(node, FUNCTION_STATEMENTS):
+        if isinstance(parents.get(id(node)), ast.ClassDef):
+            return BoundaryKind.STATEMENT_METHOD
+        ####
         return BoundaryKind.STATEMENT_FUNCTION
     ####
     if isinstance(node, ast.ClassDef):
@@ -1432,7 +1437,7 @@ def _compound_candidate(
     return _BoundaryCandidate(
         owner=node,
         block_end_line=end_line,
-        kind=_compound_kind(node),
+        kind=_compound_kind(node, parents),
         boundary=boundary,
         span_lines=max(1, end_line - node.lineno + 1),
         suite_line_counts=tuple(_suite_line_count(suite) for suite in suites),
