@@ -201,6 +201,11 @@ if ready:
 ####
 ```
 
+There is one marker here because the parenthesized assignment is a continuation,
+not another compound statement. `####` is the default marker style—visually two
+`##` pairs. If the source already uses standalone `##` markers, Scope Markers
+preserves that style instead.
+
 To reverse, or unscope, a file, use `--strip`. It removes exact standalone `##`
 and `####` marker comments only; comments containing marker-like text and
 ordinary source lines remain unchanged. Like normal formatting, it supports
