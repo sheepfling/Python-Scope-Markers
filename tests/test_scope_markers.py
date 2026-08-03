@@ -1101,6 +1101,31 @@ def test_black_compatibility_check_passes() -> None:
 ####
 
 
+def test_black_source_copy_skips_non_regular_entries(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mkfifo = cast(Callable[[str], None] | None, getattr(os, "mkfifo", None))
+    if mkfifo is None:
+        pytest.skip("FIFO creation is unavailable")
+    ####
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    fifo = source_root / "pipe.py"
+    try:
+        mkfifo(os.fspath(fifo))
+    except (OSError, NotImplementedError):
+        pytest.skip("FIFO creation is not permitted")
+    ####
+
+    destination = tmp_path / "destination"
+    monkeypatch.setattr(check_black, "PYTHON_ROOTS", (source_root,))
+    check_black._copy_unmarked_sources(destination)  # pyright: ignore[reportPrivateUsage]
+
+    assert not (destination / "pipe.py").exists()
+####
+
+
 def test_black_marker_removal_preserves_unicode_line_separators() -> None:
     source = (
         'value = """first\u2028second\n"""\n'
