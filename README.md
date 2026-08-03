@@ -121,7 +121,7 @@ The built-in presets cover the common policies:
 | `none` | No generated markers |
 | `definitions` | Complete functions and classes |
 | `statements` | Every complete compound statement, without internal clauses |
-| `classic` | Complete compound statements plus every `match case` |
+| `classic` | Complete compound statements plus the final `match case` |
 | `all` | Every supported statement and clause boundary |
 
 `classic` is the default and preserves the original Scope Markers convention.
@@ -719,14 +719,13 @@ def load(value: str) -> str:
 ####
 ```
 
-Under `classic`, `match` cases receive clause markers as well as the outer statement
-marker:
+Under `classic`, only the final `match` case receives a clause marker, followed by the
+outer statement marker:
 
 ```python
 match value:
     case 1:
         handle_one()
-    ####
     case _:
         handle_other()
     ####

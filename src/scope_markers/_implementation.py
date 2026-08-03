@@ -657,7 +657,7 @@ def _boundary_candidates(tree: ast.AST, lines: Sequence[str]) -> list[_BoundaryC
     for match in (node for node in nodes if isinstance(node, ast.Match)):
         match_depth = _candidate_depth(match, parents)
         case_facts = _candidate_facts(match, parents, lines, match_depth + 1)
-        for case in match.cases:
+        for index, case in enumerate(match.cases):
             candidate = _case_candidate(
                 case,
                 lines,
@@ -665,6 +665,7 @@ def _boundary_candidates(tree: ast.AST, lines: Sequence[str]) -> list[_BoundaryC
                 inline_headers,
                 match_depth + 1,
                 case_facts,
+                index == len(match.cases) - 1,
             )
             if candidate is not None:
                 candidates.append(candidate)
@@ -1357,12 +1358,16 @@ def _case_candidate(
         inline_headers: set[int],
         depth: int,
         facts: frozenset[str],
+        is_final_case: bool,
 ) -> _BoundaryCandidate | None:
     boundary = _match_case_boundary(case, lines, case_header_lines)
     if boundary is None or not case.body:
         return None
     ####
     end_line = case.body[-1].end_lineno or case.body[-1].lineno
+    case_facts: frozenset[str] = facts | (
+        frozenset[str](("final-case",)) if is_final_case else frozenset[str]()
+    )
     return _BoundaryCandidate(
         kind=BoundaryKind.CLAUSE_MATCH_CASE,
         boundary=boundary,
@@ -1371,7 +1376,7 @@ def _case_candidate(
         suite_statement_counts=(len(case.body),),
         clause_count=1,
         depth=depth,
-        facts=facts,
+        facts=case_facts,
         inline_suite=case.body[0].lineno in inline_headers,
     )
 ####

@@ -175,6 +175,9 @@ class RuleOverride:
 ####
 
 
+_CLASSIC_CASE_RULE: Final = RuleOverride(require=frozenset(("final-case",)))
+
+
 @dataclass(frozen=True, slots=True)
 class PolicyDecision:
     """The result and human-readable reason for evaluating one candidate."""
@@ -326,6 +329,11 @@ def classic_policy(*, mark_stubs: bool = False) -> MarkerPolicy:
     return MarkerPolicy(
         selected=CLASSIC_BOUNDARY_KINDS,
         stub_policy="mark" if mark_stubs else "skip",
+        rules=MappingProxyType(
+            {
+                BoundaryKind.CLAUSE_MATCH_CASE: _CLASSIC_CASE_RULE,
+            }
+        ),
     )
 ####
 
@@ -409,6 +417,7 @@ def policy_with_cli_overrides(
     extensions: frozenset[BoundaryKind] = policy.selector_extensions
     exclusions: frozenset[BoundaryKind] = policy.selector_exclusions
     base_selection = policy.selected
+    rules = dict(policy.rules)
     if preset is not None:
         if preset not in PRESETS:
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
@@ -416,11 +425,17 @@ def policy_with_cli_overrides(
         base_selection = PRESETS[preset]
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
+        if preset == "classic":
+            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _CLASSIC_CASE_RULE
+        else:
+            rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
+        ####
     ####
     if select:
         base_selection = expand_selectors(selector_values(select))
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
+        rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
     ####
     extensions |= expand_selectors(selector_values(extend_select))
     exclusions |= expand_selectors(selector_values(ignore))
@@ -429,6 +444,7 @@ def policy_with_cli_overrides(
         "selected": selected,
         "selector_extensions": extensions,
         "selector_exclusions": exclusions,
+        "rules": MappingProxyType(rules),
     }
     for key, value in (
             ("skip_inline_suites", skip_inline_suites),
@@ -512,12 +528,18 @@ def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> Mar
     extensions = policy.selector_extensions
     exclusions = policy.selector_exclusions
     base_selection = policy.selected
+    rules = dict(policy.rules)
     if "preset" in settings:
         preset = _string(settings, "preset", "classic")
         if preset not in PRESETS:
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
         ####
         base_selection = PRESETS[preset]
+        if preset == "classic":
+            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _CLASSIC_CASE_RULE
+        else:
+            rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
+        ####
     ####
     if "select" in settings:
         base_selection = expand_selectors(_string_array(settings, "select"))
@@ -531,13 +553,13 @@ def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> Mar
             selected=selected,
             selector_extensions=extensions,
             selector_exclusions=exclusions,
+            rules=MappingProxyType(rules),
         ),
         settings,
     )
     if "rules" not in settings:
         return policy
     ####
-    rules = dict(policy.rules)
     rules.update(_rules_from_mapping(settings["rules"]))
     return replace(policy, rules=MappingProxyType(rules))
 ####

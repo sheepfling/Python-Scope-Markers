@@ -25,6 +25,21 @@ def test_every_policy_preset_loads_and_expands(preset: str, tmp_path: Path) -> N
 ####
 
 
+def test_all_preset_marks_every_match_case(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text('preset = "all"\n', encoding="utf-8")
+    source = (
+        "match value:\n"
+        "    case 1:\n"
+        "        handle_one()\n"
+        "    case _:\n"
+        "        handle_other()\n"
+    )
+
+    assert api.format_source(source, policy=api.load_policy(config)).count("####") == 3
+####
+
+
 @pytest.mark.parametrize(
     ("settings", "expected"),
     (

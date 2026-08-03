@@ -216,7 +216,6 @@ def test_indent_width_handles_mixed_indentation_with_continuations_and_match_cas
         "    match value:\n"
         "      case 1:\n"
         "        return value\n"
-        "      ####\n"
         "      case _:\n"
         "        return 0\n"
         "      ####\n"
@@ -365,7 +364,6 @@ def test_indent_width_normalizes_comments_after_inline_match_cases() -> None:
         "match value:\n"
         "  case 1: pass\n"
         "    # Attached to the case suite.\n"
-        "  ####\n"
         "  case _: pass\n"
         "  ####\n"
         "####\n"
@@ -421,7 +419,7 @@ def test_all_compound_statement_families_are_supported(newline: str) -> None:
 
     formatted = scope_markers.format_source(source)
 
-    assert formatted.count("####") == 12
+    assert formatted.count("####") == 11
     assert scope_markers.format_source(formatted) == formatted
 ####
 
@@ -473,10 +471,8 @@ def test_match_cases_and_match_statement_are_closed_separately() -> None:
         "match value:\n"
         "    case 1:\n"
         "        pass\n"
-        "    ####\n"
         "    case 2 if ready:\n"
         "        pass\n"
-        "    ####\n"
         "    case _:\n"
         "        pass\n"
         "    ####\n"
@@ -656,7 +652,7 @@ def test_large_match_table_uses_stable_case_header_lookup() -> None:
 
     formatted = scope_markers.format_source(source)
 
-    assert formatted.count("####") == 1001
+    assert formatted.count("####") == 2
     assert scope_markers.format_source(formatted) == formatted
 ####
 
@@ -2193,11 +2189,14 @@ def test_marker_policy_can_select_existing_boundary_kinds_and_filter_shapes() ->
         "match value:\n"
         "    case 1:\n"
         "        handle()\n"
+        "    case _:\n"
+        "        fallback()\n"
     )
     definitions = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
     statements = api.MarkerPolicy(selected=api.expand_selectors(("statements",)))
     cases = api.MarkerPolicy(selected=api.expand_selectors(("clause.match.case",)))
     classic = api.classic_policy()
+    all_boundaries = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
     nested = api.MarkerPolicy(
         selected=api.expand_selectors(("statements",)), min_depth=1
     )
@@ -2205,7 +2204,9 @@ def test_marker_policy_can_select_existing_boundary_kinds_and_filter_shapes() ->
     assert api.format_source(source) == api.format_source(source, policy=classic)
     assert api.format_source(source, policy=definitions).count("####") == 1
     assert api.format_source(source, policy=statements).count("####") == 3
-    assert api.format_source(source, policy=cases).count("####") == 1
+    assert api.format_source(source, policy=cases).count("####") == 2
+    assert api.format_source(source, policy=classic).count("####") == 4
+    assert api.format_source(source, policy=all_boundaries).count("####") == 5
     assert api.format_source(source, policy=nested).count("####") == 1
 ####
 
