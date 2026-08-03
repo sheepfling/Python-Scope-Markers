@@ -151,6 +151,37 @@ class FileInspection:
 ####
 
 
+def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]]:
+    """Return the file opt-out and standalone ``ignore-next`` comment rows."""
+    first_content_row = next(
+        (row for row, line in enumerate(lines, start=1) if _line_body(line).strip()),
+        None,
+    )
+    ignore_next_rows: set[int] = set()
+    off_rows: set[int] = set()
+    for token in _token_stream("".join(lines)):
+        if token.type != tokenize.COMMENT:
+            continue
+        ####
+        row, column = token.start
+        if not 1 <= row <= len(lines):
+            continue
+        ####
+        line = _line_body(lines[row - 1])
+        if line[:column].strip(" \t\f") or line[token.end[1]:].strip(" \t\f"):
+            continue
+        ####
+        directive = token.string.strip().casefold()
+        if directive == "# scope-markers: off":
+            off_rows.add(row)
+        elif directive == "# scope-markers: ignore-next":
+            ignore_next_rows.add(row)
+        ####
+    ####
+    return first_content_row in off_rows, frozenset(ignore_next_rows)
+####
+
+
 def _read_source(path: Path) -> tuple[str, str]:
     data = path.read_bytes()
     encoding, _ = tokenize.detect_encoding(_byte_line_reader(data))
@@ -617,17 +648,58 @@ def _scope_boundaries(
 ) -> list[ScopeBoundary]:
     boundaries: list[ScopeBoundary] = []
     seen: set[tuple[int, str]] = set()
-    for candidate in _boundary_candidates(tree, lines):
-        if not _candidate_decision(candidate, policy).allowed:
+    candidates = _boundary_candidates(tree, lines)
+    ignored = _ignored_candidate_identities(candidates, lines, policy)
+    for candidate in candidates:
+        identity = (candidate.boundary.index, candidate.boundary.indentation)
+        if identity in ignored or not _candidate_decision(candidate, policy).allowed:
             continue
         ####
-        identity = (candidate.boundary.index, candidate.boundary.indentation)
         if identity not in seen:
             seen.add(identity)
             boundaries.append(candidate.boundary)
         ####
     ####
     return boundaries
+####
+
+
+def _ignored_candidate_identities(
+        candidates: Sequence[_BoundaryCandidate],
+        lines: Sequence[str],
+        policy: MarkerPolicy,
+) -> set[tuple[int, str]]:
+    _, ignore_next_rows = _scope_marker_directives(lines)
+    if not ignore_next_rows:
+        return set()
+    ####
+    selected = sorted(
+        (
+            candidate
+            for candidate in candidates
+            if _candidate_decision(candidate, policy).allowed
+        ),
+        key=lambda candidate: (
+            candidate.boundary.line_number,
+            candidate.boundary.index,
+            candidate.kind.value,
+        ),
+    )
+    ignored: set[tuple[int, str]] = set()
+    for row in sorted(ignore_next_rows):
+        target = next(
+            (
+                candidate
+                for candidate in selected
+                if candidate.boundary.line_number > row
+            ),
+            None,
+        )
+        if target is not None:
+            ignored.add((target.boundary.index, target.boundary.indentation))
+        ####
+    ####
+    return ignored
 ####
 
 
@@ -982,6 +1054,9 @@ def format_source(
         policy: MarkerPolicy | None = None,
 ) -> str:
     """Return source with canonical markers after supported compound statements."""
+    if _scope_marker_directives(_physical_lines(source))[0]:
+        return source
+    ####
     source, clean_source, tree, lines, marker, effective_policy = _prepare_source(
         source,
         filename=filename,
@@ -1025,6 +1100,9 @@ def explain_source(
         policy: MarkerPolicy | None = None,
 ) -> tuple[BoundaryExplanation, ...]:
     """Explain every candidate boundary for an in-memory Python source string."""
+    if _scope_marker_directives(_physical_lines(source))[0]:
+        return ()
+    ####
     _, _, tree, lines, _, effective_policy = _prepare_source(
         source,
         filename=filename,
@@ -1034,9 +1112,14 @@ def explain_source(
     )
     explanations: list[BoundaryExplanation] = []
     selected: dict[tuple[int, str], BoundaryKind] = {}
-    for candidate in _boundary_candidates(tree, lines):
+    candidates = _boundary_candidates(tree, lines)
+    ignored = _ignored_candidate_identities(candidates, lines, effective_policy)
+    for candidate in candidates:
         decision = _candidate_decision(candidate, effective_policy)
         identity = (candidate.boundary.index, candidate.boundary.indentation)
+        if identity in ignored:
+            decision = PolicyDecision(False, "ignored by source directive")
+        ####
         will_mark = decision.allowed and identity not in selected
         reason = decision.reason
         if decision.allowed and not will_mark:

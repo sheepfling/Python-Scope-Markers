@@ -518,6 +518,28 @@ already contains one of those styles, newly inserted markers use it. Files with
 no existing markers default to `####`. If both styles appear as standalone
 markers, formatting fails instead of guessing.
 
+## Local suppression comments
+
+Use a standalone comment when a source file or one generated boundary should
+remain unmarked:
+
+```python
+# scope-markers: off
+```
+
+When this is the first non-empty line, the file is left unchanged. To skip
+only the next selected boundary, place this comment immediately before it:
+
+```python
+# scope-markers: ignore-next
+def generated_section() -> None:
+    pass
+```
+
+The nested scopes inside an ignored boundary remain eligible for markers.
+Only standalone comments are directives; inline comments and ordinary
+comments are preserved without affecting formatting.
+
 ## Exact policy
 
 One marker is emitted after each complete Python compound statement:

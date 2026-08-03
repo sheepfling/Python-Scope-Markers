@@ -1250,6 +1250,37 @@ def test_marker_like_comments_are_not_owned_by_the_formatter() -> None:
 ####
 
 
+def test_file_scope_marker_opt_out_preserves_source() -> None:
+    source = "# scope-markers: off\ndef example():\n    pass\n"
+
+    assert scope_markers.format_source(source, indent_width=2) == source
+    assert scope_markers.format_source(source) == source
+    assert scope_markers.explain_source(source) == ()
+####
+
+
+def test_ignore_next_skips_one_boundary_but_not_nested_scopes() -> None:
+    source = (
+        "# scope-markers: ignore-next\n"
+        "def outer():\n"
+        "    def inner():\n"
+        "        pass\n"
+        "    pass\n"
+    )
+    expected = (
+        "# scope-markers: ignore-next\n"
+        "def outer():\n"
+        "    def inner():\n"
+        "        pass\n"
+        "    ####\n"
+        "    pass\n"
+    )
+
+    assert scope_markers.format_source(source) == expected
+    assert scope_markers.format_source(expected) == expected
+####
+
+
 def test_two_hash_marker_style_is_detected_and_preserved() -> None:
     source = "def example() -> None:\n    pass\n##\n"
 
