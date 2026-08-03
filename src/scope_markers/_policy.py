@@ -177,6 +177,20 @@ class RuleOverride:
 _FINAL_CASE_RULE: Final = RuleOverride(require=frozenset(("final-case",)))
 
 
+def _remove_default_final_case_rule(rules: dict[BoundaryKind, RuleOverride]) -> None:
+    if rules.get(BoundaryKind.CLAUSE_MATCH_CASE) == _FINAL_CASE_RULE:
+        rules.pop(BoundaryKind.CLAUSE_MATCH_CASE)
+    ####
+####
+
+
+def _ensure_default_final_case_rule(rules: dict[BoundaryKind, RuleOverride]) -> None:
+    if BoundaryKind.CLAUSE_MATCH_CASE not in rules:
+        rules[BoundaryKind.CLAUSE_MATCH_CASE] = _FINAL_CASE_RULE
+    ####
+####
+
+
 @dataclass(frozen=True, slots=True)
 class PolicyDecision:
     """The result and human-readable reason for evaluating one candidate."""
@@ -425,16 +439,16 @@ def policy_with_cli_overrides(
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
         if preset == "statements":
-            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _FINAL_CASE_RULE
+            _ensure_default_final_case_rule(rules)
         else:
-            rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
+            _remove_default_final_case_rule(rules)
         ####
     ####
     if select:
         base_selection = expand_selectors(selector_values(select))
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
-        rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
+        _remove_default_final_case_rule(rules)
     ####
     extensions |= expand_selectors(selector_values(extend_select))
     exclusions |= expand_selectors(selector_values(ignore))
@@ -535,13 +549,14 @@ def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> Mar
         ####
         base_selection = PRESETS[preset]
         if preset == "statements":
-            rules[BoundaryKind.CLAUSE_MATCH_CASE] = _FINAL_CASE_RULE
+            _ensure_default_final_case_rule(rules)
         else:
-            rules.pop(BoundaryKind.CLAUSE_MATCH_CASE, None)
+            _remove_default_final_case_rule(rules)
         ####
     ####
     if "select" in settings:
         base_selection = expand_selectors(_string_array(settings, "select"))
+        _remove_default_final_case_rule(rules)
     ####
     extensions |= expand_selectors(_string_array(settings, "extend-select"))
     exclusions |= expand_selectors(_string_array(settings, "ignore"))

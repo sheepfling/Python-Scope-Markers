@@ -50,6 +50,50 @@ def test_all_preset_marks_every_match_case(tmp_path: Path) -> None:
 ####
 
 
+@pytest.mark.parametrize("selection", ("all", "clause.match.case"))
+def test_explicit_selection_does_not_inherit_final_case_filter(
+        selection: str, tmp_path: Path
+) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(f'select = ["{selection}"]\n', encoding="utf-8")
+    source = (
+        "match value:\n"
+        "    case 1:\n"
+        "        handle_one()\n"
+        "    case _:\n"
+        "        handle_other()\n"
+    )
+
+    assert api.format_source(source, policy=api.load_policy(config)).count("####") == (
+        3 if selection == "all" else 2
+    )
+####
+
+
+def test_cli_preset_preserves_custom_match_case_rule(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    source = tmp_path / "example.py"
+    config.write_text(
+        'preset = "statements"\n'
+        "\n"
+        '[rules."clause.match.case"]\n'
+        "min-body-lines = 2\n",
+        encoding="utf-8",
+    )
+    source.write_text(
+        "match value:\n"
+        "    case 1:\n"
+        "        handle_one()\n"
+        "    case _:\n"
+        "        handle_other()\n",
+        encoding="utf-8",
+    )
+
+    assert cli.main(["--config", str(config), "--preset", "all", "--fix", str(source)]) == 0
+    assert source.read_text(encoding="utf-8").count("####") == 1
+####
+
+
 @pytest.mark.parametrize(
     ("settings", "expected"),
     (
@@ -205,6 +249,9 @@ def test_per_file_preset_preserves_accumulated_selector_arithmetic(tmp_path: Pat
         'extend-select = ["clause.if.else"]\n'
         'ignore = ["statement.if"]\n'
         "\n"
+        '[rules."clause.match.case"]\n'
+        "min-body-lines = 2\n"
+        "\n"
         "[[per-file]]\n"
         'patterns = ["src/**"]\n'
         'preset = "statements"\n',
@@ -216,6 +263,7 @@ def test_per_file_preset_preserves_accumulated_selector_arithmetic(tmp_path: Pat
 
     assert api.BoundaryKind.STATEMENT_IF not in policy.selected
     assert api.BoundaryKind.CLAUSE_IF_ELSE in policy.selected
+    assert policy.rules[api.BoundaryKind.CLAUSE_MATCH_CASE].min_body_lines == 2
 ####
 
 
