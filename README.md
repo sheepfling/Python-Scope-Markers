@@ -177,6 +177,30 @@ to spaces and adjusts block comments, but deliberately preserves multiline
 continuation alignment and blank-line whitespace. It is not a replacement for
 a full code formatter; when using one, run it before scope markers.
 
+For example, this changes block indentation while preserving the continuation
+alignment inside the parenthesized expression:
+
+```bash
+scope-markers --indent-width 2 --fix src
+```
+
+```python
+# Before
+if ready:
+    values = (
+        first
+        + second
+    )
+
+# After --indent-width 2
+if ready:
+  values = (
+        first
+        + second
+    )
+####
+```
+
 To reverse, or unscope, a file, use `--strip`. It removes exact standalone `##`
 and `####` marker comments only; comments containing marker-like text and
 ordinary source lines remain unchanged. Like normal formatting, it supports
@@ -188,6 +212,21 @@ scope-markers --strip src tests          # report files containing markers
 scope-markers --strip --diff src tests   # show removals as a patch
 scope-markers --strip --fix src tests    # remove markers in place
 ```
+
+For example, `--strip --fix` changes only recognized standalone marker lines:
+
+```python
+# Before
+def run() -> None:
+    work()
+####
+
+# After
+def run() -> None:
+    work()
+```
+
+Marker-like text inside strings or ordinary comments is preserved.
 
 Diff output preserves LF and CRLF records and includes explicit markers for a
 missing final newline. `--diff` rejects changed files with bare-CR line endings
@@ -222,6 +261,12 @@ often use `.bzl`:
 
 ```bash
 scope-markers --include "*.bzl" --fix .
+```
+
+For example, scan Starlark files while leaving a generated vendor tree out:
+
+```bash
+scope-markers --include "*.bzl" --exclude vendor --fix .
 ```
 
 Included files still need to be parseable by Python's AST, and exclusions and
@@ -354,6 +399,33 @@ One marker is emitted after each complete Python compound statement:
 Clause boundaries are marked at their own indentation. For example, an `if`
 chain receives one marker, while each `case` block receives a clause marker and
 the enclosing `match` statement receives its own outer marker.
+
+Nested statements close from the inside out:
+
+```python
+def load(value: str) -> str:
+    if value:
+        with open(value, encoding="utf-8") as stream:
+            return stream.read()
+        ####
+    ####
+    return ""
+####
+```
+
+`match` cases receive their own clause markers in addition to the enclosing
+`match` marker:
+
+```python
+match value:
+    case 1:
+        handle_one()
+    ####
+    case _:
+        handle_other()
+    ####
+####
+```
 
 Documentation-only and ellipsis-only function stubs are skipped by default so
 that overloads, protocols, and interface stubs remain compact. Use
