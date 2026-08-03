@@ -7,17 +7,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._implementation import (
-    FILE_PROCESSING_ERRORS,
-    FileInspection,
-    _error_message,  # pyright: ignore[reportPrivateUsage]
-    _physical_lines,  # pyright: ignore[reportPrivateUsage]
-    _read_source,  # pyright: ignore[reportPrivateUsage]
-    _write_atomic,  # pyright: ignore[reportPrivateUsage]
-    format_source,
-    strip_markers,
-)
+from ._errors import FILE_PROCESSING_ERRORS, format_error
+from ._implementation import format_source, strip_markers
 from ._policy import MarkerPolicy
+from ._source import physical_lines, read_source, write_atomic
+from ._types import FileInspection
 
 PYTHON_FENCE_LANGUAGES = frozenset({"py", "python", "python3"})
 _FENCE_PATTERN = re.compile(r"^( {0,3})([`~]{3,})(.*)$")
@@ -163,7 +157,7 @@ def format_markdown_source(
         policy: MarkerPolicy | None = None,
 ) -> str:
     """Format Python fences in Markdown while preserving surrounding text."""
-    lines = _physical_lines(source)
+    lines = physical_lines(source)
     formatted_lines = list(lines)
     for block in reversed(_fence_blocks(lines)):
         language = block.info.split(maxsplit=1)
@@ -192,7 +186,7 @@ def format_markdown_source(
                 policy=policy,
             )
         ####
-        formatted_payload_lines = _physical_lines(formatted_payload)
+        formatted_payload_lines = physical_lines(formatted_payload)
         restored = _restore_fence_indentation(
             formatted_payload_lines, original_payload, block.indentation
         )
@@ -211,7 +205,7 @@ def inspect_markdown_file(
         policy: MarkerPolicy | None = None,
 ) -> FileInspection:
     """Read and canonicalize Python fences in one Markdown file."""
-    source, encoding = _read_source(path)
+    source, encoding = read_source(path)
     formatted = format_markdown_source(
         source,
         filename=str(path),
@@ -243,10 +237,10 @@ def process_markdown_file(
             policy=policy,
         )
         if inspection.changed and fix:
-            _write_atomic(path, inspection.formatted.encode(inspection.encoding))
+            write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####
     except FILE_PROCESSING_ERRORS as error:
-        return False, _error_message(path, error)
+        return False, format_error(path, error)
     ####
     return inspection.changed, None
 ####

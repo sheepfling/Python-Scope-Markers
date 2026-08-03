@@ -8,12 +8,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ._diff import render_diff, write_diff
-from ._implementation import (
-    FILE_PROCESSING_ERRORS,
-    MARKDOWN_SUFFIXES,
-    format_error,
-    write_atomic,
-)
+from ._errors import FILE_PROCESSING_ERRORS, format_error
+from ._implementation import MARKDOWN_SUFFIXES
 from ._markdown import inspect_markdown_file
 from ._paths import display_path
 from ._policy import (
@@ -25,6 +21,7 @@ from ._policy import (
     policy_with_cli_overrides,
     resolve_policy,
 )
+from ._source import write_atomic
 from .api import (
     __version__,
     discover_python_files,

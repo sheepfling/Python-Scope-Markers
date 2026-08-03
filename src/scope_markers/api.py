@@ -5,11 +5,8 @@ module. The implementation remains private so its internals can evolve without
 requiring callers to depend on private names.
 """
 
+from ._errors import ScopeMarkersError
 from ._implementation import (
-    BoundaryExplanation,
-    FileInspection,
-    ScopeBoundary,
-    ScopeMarkersError,
     __version__,
     discover_python_files,
     explain_file,
@@ -39,6 +36,7 @@ from ._policy import (
     load_policy,
     resolve_policy,
 )
+from ._types import BoundaryExplanation, FileInspection, ScopeBoundary
 
 __all__ = (
     "BoundaryExplanation",

@@ -8,8 +8,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from ._implementation import ScopeMarkersError, physical_lines
-from .api import FileInspection
+from ._errors import ScopeMarkersError
+from ._source import physical_lines
+from ._types import FileInspection
 
 
 def _repository_root(start: Path) -> Path | None:

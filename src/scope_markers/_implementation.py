@@ -5,46 +5,28 @@ from __future__ import annotations
 
 import ast
 import os
-import stat
 import sys
-import tempfile
 import tokenize
 from bisect import bisect_right
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableSequence, Sequence
-from contextlib import suppress
+from collections.abc import Iterable, Iterator, Mapping, MutableSequence, Sequence
 from dataclasses import dataclass, replace
 from fnmatch import fnmatch
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
-from io import StringIO
 from pathlib import Path
 from typing import Final, cast
 
+from ._errors import FILE_PROCESSING_ERRORS, ScopeMarkersError, format_error
 from ._paths import display_path
-from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, PolicyError, classic_policy
+from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, classic_policy
+from ._source import physical_lines, read_source, write_atomic
+from ._types import BoundaryExplanation, FileInspection, ScopeBoundary
 
 try:
     __version__ = package_version("scope-markers")
 except PackageNotFoundError:
     __version__ = "0+unknown"
 ####
-
-
-class ScopeMarkersError(ValueError):
-    """Raised when source cannot be formatted under scope-marker rules."""
-####
-
-
-FILE_PROCESSING_ERRORS: Final = (
-    OSError,
-    SyntaxError,
-    UnicodeError,
-    tokenize.TokenError,
-    ScopeMarkersError,
-    PolicyError,
-)
-# All public file operations and the CLI convert these expected input/filesystem
-# failures into diagnostics. Keep the tuple shared so new operations cannot drift.
 
 
 # ``####`` is the documented default; existing standalone markers can select
@@ -98,29 +80,6 @@ COMPOUND_STATEMENTS: Final = (
 )
 
 @dataclass(frozen=True, slots=True)
-class ScopeBoundary:
-    """One canonical marker insertion point."""
-
-    index: int
-    indentation: str
-    indentation_width: int
-    line_number: int
-####
-
-
-@dataclass(frozen=True, slots=True)
-class BoundaryExplanation:
-    """One candidate boundary and the policy decision made for it."""
-
-    kind: BoundaryKind
-    line_number: int
-    insertion_line: int
-    will_mark: bool
-    reason: str
-####
-
-
-@dataclass(frozen=True, slots=True)
 class _BoundaryCandidate:
     """A policy-independent analyzed marker insertion candidate."""
 
@@ -133,22 +92,6 @@ class _BoundaryCandidate:
     depth: int
     facts: frozenset[str]
     inline_suite: bool
-####
-
-
-@dataclass(frozen=True, slots=True)
-class FileInspection:
-    """The decoded and canonical forms of one Python file."""
-
-    path: Path
-    source: str
-    formatted: str
-    encoding: str
-
-    @property
-    def changed(self) -> bool:
-        return self.source != self.formatted
-    ####
 ####
 
 
@@ -203,60 +146,6 @@ def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]
 ####
 
 
-def _read_source(path: Path) -> tuple[str, str]:
-    data = path.read_bytes()
-    encoding, _ = tokenize.detect_encoding(_byte_line_reader(data))
-    return data.decode(encoding), encoding
-####
-
-
-def _physical_byte_lines(data: bytes) -> Iterator[bytes]:
-    """Yield byte records split only on CR, LF, and CRLF boundaries."""
-    index = 0
-    while index < len(data):
-        start = index
-        while index < len(data) and data[index] not in (ord("\r"), ord("\n")):
-            index += 1
-        ####
-        if index == len(data):
-            yield data[start:]
-            return
-        ####
-        index += 1
-        if data[index - 1] == ord("\r") and index < len(data) and data[index] == ord("\n"):
-            index += 1
-        ####
-        yield data[start:index]
-    ####
-####
-
-
-def _byte_line_reader(data: bytes) -> Callable[[], bytes]:
-    """Return LF-normalized physical records for ``tokenize.detect_encoding``."""
-    lines = iter(_physical_byte_lines(data))
-
-    def readline() -> bytes:
-        line = next(lines, b"")
-        if line.endswith(b"\r\n"):
-            return line[:-2] + b"\n"
-        ####
-        if line.endswith(b"\r"):
-            return line[:-1] + b"\n"
-        ####
-        return line
-    ####
-
-
-    return readline
-####
-
-
-def _physical_lines(source: str) -> list[str]:
-    """Split only on Python-supported CR, LF, and CRLF line boundaries."""
-    return StringIO(source, newline="").readlines()
-####
-
-
 def _line_ending(line: str) -> str | None:
     if line.endswith("\r\n"):
         return "\r\n"
@@ -283,7 +172,7 @@ def _line_body(line: str) -> str:
 def _preferred_newline(source: str) -> str:
     counts = {"\r\n": 0, "\n": 0, "\r": 0}
     first_seen: dict[str, int] = {}
-    for index, line in enumerate(_physical_lines(source)):
+    for index, line in enumerate(physical_lines(source)):
         ending = _line_ending(line)
         if ending is None:
             continue
@@ -348,7 +237,7 @@ def _indentation_width(indentation: str) -> int:
 
 def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
     """Tokenize source using LF records while preserving physical source rows."""
-    lines = iter(_physical_lines(source))
+    lines = iter(physical_lines(source))
 
     def readline() -> str:
         line = next(lines, "")
@@ -385,7 +274,7 @@ def _indentation_safe_source(source: str) -> str:
     """Make indentation recoverable for lexical comment scanning."""
     levels = [0]
     normalized: list[str] = []
-    for line in _physical_lines(source):
+    for line in physical_lines(source):
         body = _line_body(line)
         prefix_length = len(body) - len(body.lstrip(" \t\f"))
         if not body.strip(" \t\f"):
@@ -409,7 +298,7 @@ def _indentation_safe_source(source: str) -> str:
 
 
 def _standalone_marker_lines(source: str, marker: str) -> set[int]:
-    lines = _physical_lines(source)
+    lines = physical_lines(source)
     try:
         return _marker_lines_from_tokens(_token_stream(source), lines, marker)
     except IndentationError:
@@ -438,7 +327,7 @@ def _without_markers(source: str, marker: str) -> str:
     if not marker_lines:
         return source
     ####
-    lines = _physical_lines(source)
+    lines = physical_lines(source)
     return "".join(line for index, line in enumerate(lines) if index not in marker_lines)
 ####
 
@@ -452,7 +341,7 @@ def strip_markers(source: str) -> str:
     if not marker_lines:
         return source
     ####
-    lines = _physical_lines(source)
+    lines = physical_lines(source)
     return "".join(line for index, line in enumerate(lines) if index not in marker_lines)
 ####
 
@@ -1012,7 +901,7 @@ def _reindent_source(source: str, indent_width: int) -> str:
         raise ScopeMarkersError("indent_width must be a positive integer")
     ####
     original_tree = ast.parse(source)
-    lines = _physical_lines(source)
+    lines = physical_lines(source)
     prefix_depths = _block_indentation_depths(lines, source)
     inline_comment_depths = _inline_suite_comment_depths(
         original_tree, lines, _logical_statement_depths(source)
@@ -1075,7 +964,7 @@ def format_source(
         policy: MarkerPolicy | None = None,
 ) -> str:
     """Return source with canonical markers after supported compound statements."""
-    if _scope_marker_directives(_physical_lines(source))[0]:
+    if _scope_marker_directives(physical_lines(source))[0]:
         return source
     ####
     source, clean_source, tree, lines, marker, effective_policy = _prepare_source(
@@ -1121,7 +1010,7 @@ def explain_source(
         policy: MarkerPolicy | None = None,
 ) -> tuple[BoundaryExplanation, ...]:
     """Explain every candidate boundary for an in-memory Python source string."""
-    if _scope_marker_directives(_physical_lines(source))[0]:
+    if _scope_marker_directives(physical_lines(source))[0]:
         return ()
     ####
     _, _, tree, lines, _, effective_policy = _prepare_source(
@@ -1176,7 +1065,7 @@ def _prepare_source(
     marker = _detect_marker_style(source)
     clean_source = _without_markers(source, marker)
     tree = ast.parse(clean_source, filename=filename)
-    lines = _physical_lines(clean_source)
+    lines = physical_lines(clean_source)
     effective_policy = policy or classic_policy(mark_stubs=mark_stubs)
     if mark_stubs and policy is not None and policy.stub_policy == "skip":
         effective_policy = replace(policy, stub_policy="mark")
@@ -1903,7 +1792,7 @@ def inspect_file(
         policy: MarkerPolicy | None = None,
 ) -> FileInspection:
     """Read and canonicalize one Python file without modifying it."""
-    source, encoding = _read_source(path)
+    source, encoding = read_source(path)
     formatted = format_source(
         source,
         filename=str(path),
@@ -1923,7 +1812,7 @@ def explain_file(
         policy: MarkerPolicy | None = None,
 ) -> tuple[BoundaryExplanation, ...]:
     """Read one Python file and explain every marker-boundary decision."""
-    source, _ = _read_source(path)
+    source, _ = read_source(path)
     return explain_source(
         source,
         filename=str(path),
@@ -1936,63 +1825,13 @@ def explain_file(
 
 def inspect_stripped_file(path: Path) -> FileInspection:
     """Read one file and prepare an inspection that removes scope markers."""
-    source, encoding = _read_source(path)
+    source, encoding = read_source(path)
     return FileInspection(
         path=path,
         source=source,
         formatted=strip_markers(source),
         encoding=encoding,
     )
-####
-
-
-def _write_atomic(path: Path, data: bytes) -> None:
-    """Replace a file atomically while preserving its executable permission bits."""
-    target = path.resolve(strict=True) if path.is_symlink() else path
-    mode = stat.S_IMODE(target.stat().st_mode)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.name}.",
-        suffix=".scope-markers.tmp",
-        dir=target.parent,
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        ####
-        os.chmod(temporary, mode)
-        os.replace(temporary, target)
-    finally:
-        with suppress(OSError):
-            temporary.unlink(missing_ok=True)
-        ####
-    ####
-####
-
-
-def _error_message(path: Path, error: BaseException) -> str:
-    if isinstance(error, SyntaxError):
-        return (
-            f"{display_path(path)}:{error.lineno or 0}:{error.offset or 0}: "
-            f"{error.msg}"
-        )
-    ####
-    if isinstance(error, tokenize.TokenError) and len(error.args) >= 2:
-        message = error.args[0]
-        location = error.args[1]
-        if isinstance(message, str) and isinstance(location, tuple):
-            location_values = cast(tuple[object, ...], location)
-            if len(location_values) == 2:
-                line, column = location_values
-                if isinstance(line, int) and isinstance(column, int):
-                    return f"{display_path(path)}:{line}:{column}: {message}"
-                ####
-            ####
-        ####
-    ####
-    return f"{display_path(path)}: {error}"
 ####
 
 
@@ -2013,42 +1852,22 @@ def process_file(
             policy=policy,
         )
         if inspection.changed and fix:
-            _write_atomic(path, inspection.formatted.encode(inspection.encoding))
+            write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####
     except FILE_PROCESSING_ERRORS as error:
-        return False, _error_message(path, error)
+        return False, format_error(path, error)
     ####
     return inspection.changed, None
 ####
-
-
 def strip_file(path: Path, *, fix: bool) -> tuple[bool, str | None]:
     """Check or strip standalone scope markers from one file."""
     try:
         inspection = inspect_stripped_file(path)
         if inspection.changed and fix:
-            _write_atomic(path, inspection.formatted.encode(inspection.encoding))
+            write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####
     except FILE_PROCESSING_ERRORS as error:
-        return False, _error_message(path, error)
+        return False, format_error(path, error)
     ####
     return inspection.changed, None
-####
-
-
-def format_error(path: Path, error: BaseException) -> str:
-    """Format a user-facing file-processing error for the CLI."""
-    return _error_message(path, error)
-####
-
-
-def physical_lines(source: str) -> list[str]:
-    """Expose physical line splitting to the CLI diff renderer."""
-    return _physical_lines(source)
-####
-
-
-def write_atomic(path: Path, data: bytes) -> None:
-    """Write encoded data atomically for the CLI."""
-    _write_atomic(path, data)
 ####
