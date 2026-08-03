@@ -1376,6 +1376,43 @@ def test_recursive_directives_coexist_with_other_tool_directives(
 ####
 
 
+@pytest.mark.parametrize(
+    ("prefix", "header", "suite"),
+    (
+        (
+            "if ready:\n    pass\n",
+            "else:",
+            "    def fallback() -> None:\n        pass\n",
+        ),
+        (
+            "try:\n    pass\n",
+            "except ValueError:",
+            "    def recover() -> None:\n        pass\n",
+        ),
+        (
+            "try:\n    pass\n",
+            "finally:",
+            "    def close() -> None:\n        pass\n",
+        ),
+    ),
+)
+def test_ignore_next_block_before_clause_keeps_enclosing_boundary(
+        prefix: str, header: str, suite: str
+) -> None:
+    source = prefix + (
+        "# scope-markers: ignore-next-block\n"
+        f"{header}\n"
+        f"{suite}"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    formatted = scope_markers.format_source(source, policy=policy)
+
+    assert "# scope-markers: ignore-next-block\n" in formatted
+    assert formatted.count("####") == 2
+####
+
+
 def test_directive_like_comments_are_not_treated_as_scope_directives() -> None:
     source = (
         "# noqa: scope-markers: ignore-next-block\n"
