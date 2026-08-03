@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import suppress
 from importlib.metadata import entry_points
 from importlib.metadata import version as installed_version
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 import scope_markers as package
-from scope_markers import api, cli
+from scope_markers import _paths, api, cli
 from scripts import check_black, check_diff, check_rumdl, ci
 
 # Literal ``####`` values intentionally verify the formatter's defining output.
@@ -64,6 +67,34 @@ def test_indent_width_normalizes_blocks_and_regenerates_markers(newline: str) ->
         "  ####\n"
         "####\n"
     ).replace("\n", newline)
+####
+
+
+@pytest.mark.parametrize(("existing_marker", "expected_marker"), (("", "####"), ("##\n", "##")))
+def test_indent_width_does_not_mark_parenthesized_continuations(
+        existing_marker: str, expected_marker: str
+) -> None:
+    source = (
+        "if ready:\n"
+        "    values = (\n"
+        "        first\n"
+        "        + second\n"
+        "    )\n"
+        f"{existing_marker}"
+    )
+
+    formatted = scope_markers.format_source(source, indent_width=2)
+
+    assert formatted == (
+        "if ready:\n"
+        "  values = (\n"
+        "        first\n"
+        "        + second\n"
+        "    )\n"
+        f"{expected_marker}\n"
+    )
+    assert formatted.count(expected_marker) == 1
+    assert scope_markers.format_source(formatted, indent_width=2) == formatted
 ####
 
 
@@ -250,6 +281,75 @@ def test_indent_width_normalizes_comments_after_inline_clause_headers() -> None:
         "####\n"
         "next_value = 1\n"
     )
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_indent_width_normalizes_comments_after_multiline_inline_headers(
+        newline: str,
+) -> None:
+    source = (
+        "if (\n"
+        "    condition\n"
+        "): pass\n"
+        "    # Attached to the multiline inline suite.\n"
+        "next_value = 1\n"
+    ).replace("\n", newline)
+
+    assert scope_markers.format_source(source, indent_width=2) == (
+        "if (\n"
+        "    condition\n"
+        "): pass\n"
+        "  # Attached to the multiline inline suite.\n"
+        "####\n"
+        "next_value = 1\n"
+    ).replace("\n", newline)
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_indent_width_preserves_nested_multiline_docstring_content(
+        newline: str,
+) -> None:
+    source = (
+        "class Example:\n"
+        '    """Class docs.\n'
+        "\n"
+        "    # Literal comment text.\n"
+        "    ####\n"
+        "    \\tPreserve this tab.\n"
+        '    """\n'
+        "    def method(self):\n"
+        '        r"""Method docs.\n'
+        "\n"
+        "        # Not a source comment.\n"
+        '        """\n'
+        "        if ready:\n"
+        "            pass\n"
+    ).replace("\n", newline)
+
+    formatted = scope_markers.format_source(source, indent_width=2)
+
+    assert formatted == (
+        "class Example:\n"
+        '  """Class docs.\n'
+        "\n"
+        "    # Literal comment text.\n"
+        "    ####\n"
+        "    \\tPreserve this tab.\n"
+        '    """\n'
+        "  def method(self):\n"
+        '    r"""Method docs.\n'
+        "\n"
+        "        # Not a source comment.\n"
+        '        """\n'
+        "    if ready:\n"
+        "      pass\n"
+        "    ####\n"
+        "  ####\n"
+        "####\n"
+    ).replace("\n", newline)
+    assert scope_markers.format_source(formatted, indent_width=2) == formatted
 ####
 
 
@@ -1001,6 +1101,31 @@ def test_black_compatibility_check_passes() -> None:
 ####
 
 
+def test_black_source_copy_skips_non_regular_entries(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mkfifo = cast(Callable[[str], None] | None, getattr(os, "mkfifo", None))
+    if mkfifo is None:
+        pytest.skip("FIFO creation is unavailable")
+    ####
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    fifo = source_root / "pipe.py"
+    try:
+        mkfifo(os.fspath(fifo))
+    except (OSError, NotImplementedError):
+        pytest.skip("FIFO creation is not permitted")
+    ####
+
+    destination = tmp_path / "destination"
+    monkeypatch.setattr(check_black, "PYTHON_ROOTS", (source_root,))
+    check_black._copy_unmarked_sources(destination)  # pyright: ignore[reportPrivateUsage]
+
+    assert not (destination / "pipe.py").exists()
+####
+
+
 def test_black_marker_removal_preserves_unicode_line_separators() -> None:
     source = (
         'value = """first\u2028second\n"""\n'
@@ -1150,6 +1275,45 @@ def test_marker_like_comments_are_not_owned_by_the_formatter() -> None:
     assert "#### explanation\n" in formatted
     assert "value = 1  # ####\n" in formatted
     assert formatted.count("\n####\n") == 1
+####
+
+
+def test_file_scope_marker_opt_out_preserves_source() -> None:
+    source = "# scope-markers: off\ndef example():\n    pass\n"
+
+    assert scope_markers.format_source(source, indent_width=2) == source
+    assert scope_markers.format_source(source) == source
+    assert scope_markers.explain_source(source) == ()
+####
+
+
+def test_file_scope_marker_opt_out_preserves_unterminated_source() -> None:
+    source = "# scope-markers: off\nvalue = (\n"
+
+    assert scope_markers.format_source(source) == source
+    assert scope_markers.explain_source(source) == ()
+####
+
+
+def test_ignore_next_skips_one_boundary_but_not_nested_scopes() -> None:
+    source = (
+        "# scope-markers: ignore-next\n"
+        "def outer():\n"
+        "    def inner():\n"
+        "        pass\n"
+        "    pass\n"
+    )
+    expected = (
+        "# scope-markers: ignore-next\n"
+        "def outer():\n"
+        "    def inner():\n"
+        "        pass\n"
+        "    ####\n"
+        "    pass\n"
+    )
+
+    assert scope_markers.format_source(source) == expected
+    assert scope_markers.format_source(expected) == expected
 ####
 
 
@@ -1691,6 +1855,26 @@ def test_discovery_matches_absolute_include_and_exclude_patterns(
 ####
 
 
+def test_recursive_discovery_skips_non_regular_supported_entries(tmp_path: Path) -> None:
+    mkfifo = cast(Callable[[str], None] | None, getattr(os, "mkfifo", None))
+    if mkfifo is None:
+        pytest.skip("FIFO creation is unavailable")
+    ####
+
+    fifo = tmp_path / "pipe.py"
+    try:
+        mkfifo(os.fspath(fifo))
+    except (OSError, NotImplementedError):
+        pytest.skip("FIFO creation is not permitted")
+    ####
+
+    files, errors = api.discover_python_files([tmp_path])
+
+    assert files == []
+    assert errors == []
+####
+
+
 def test_discovery_include_patterns_allow_python_compatible_extensions(tmp_path: Path) -> None:
     starlark = tmp_path / "BUILD.bzl"
     starlark.write_text("def rule():\n    pass\n", encoding="utf-8")
@@ -1924,18 +2108,45 @@ def test_strip_file_returns_diagnostic_for_invalid_encoding_declaration(
 ####
 
 
+def test_strip_file_recovers_from_invalid_unindent_before_marker(
+        tmp_path: Path,
+) -> None:
+    path = tmp_path / "invalid-unindent.py"
+    path.write_text("if ready:\n    pass\n  ####\n", encoding="utf-8")
+
+    assert api.strip_file(path, fix=True) == (True, None)
+    assert path.read_text(encoding="utf-8") == "if ready:\n    pass\n"
+####
+
+
 def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None:
     assert api.__all__ == (
+        "BoundaryExplanation",
+        "BoundaryKind",
         "FileInspection",
+        "MarkerPolicy",
+        "PolicyDecision",
+        "PolicyError",
         "ScopeBoundary",
         "ScopeMarkersError",
         "__version__",
+        "classic_policy",
+        "describe_policy",
         "discover_python_files",
+        "expand_selectors",
+        "explain_file",
+        "explain_source",
+        "find_config",
+        "format_markdown_source",
         "format_source",
         "inspect_file",
+        "inspect_markdown_file",
         "inspect_stripped_file",
+        "load_policy",
         "process_file",
+        "process_markdown_file",
         "python_files",
+        "resolve_policy",
         "strip_file",
         "strip_markers",
     )
@@ -1971,6 +2182,481 @@ def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None
 
     boundary = api.ScopeBoundary(0, "", 0, 1)
     assert boundary.line_number == 1
+####
+
+
+def test_marker_policy_can_select_existing_boundary_kinds_and_filter_shapes() -> None:
+    source = (
+        "def outer():\n"
+        "    if ready:\n"
+        "        work()\n"
+        "match value:\n"
+        "    case 1:\n"
+        "        handle()\n"
+    )
+    definitions = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
+    statements = api.MarkerPolicy(selected=api.expand_selectors(("statements",)))
+    cases = api.MarkerPolicy(selected=api.expand_selectors(("clause.match.case",)))
+    classic = api.classic_policy()
+    nested = api.MarkerPolicy(
+        selected=api.expand_selectors(("statements",)), min_depth=1
+    )
+
+    assert api.format_source(source) == api.format_source(source, policy=classic)
+    assert api.format_source(source, policy=definitions).count("####") == 1
+    assert api.format_source(source, policy=statements).count("####") == 3
+    assert api.format_source(source, policy=cases).count("####") == 1
+    assert api.format_source(source, policy=nested).count("####") == 1
+####
+
+
+def test_marker_policy_filters_inline_and_short_suites() -> None:
+    source = "if ready: work()\nif (\n    later\n): work()\nif tomorrow:\n    work()\n"
+    policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("statement.if",)),
+        skip_inline_suites=True,
+        min_body_lines=2,
+    )
+
+    assert api.format_source(source, policy=policy) == source
+####
+
+
+def test_clause_selectors_mark_each_if_branch_without_duplicate_final_marker() -> None:
+    source = (
+        "if first:\n"
+        "    handle_first()\n"
+        "elif second:\n"
+        "    handle_second()\n"
+        "else:\n"
+        "    handle_default()\n"
+    )
+    all_boundaries = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+    final_else = api.MarkerPolicy(selected=api.expand_selectors(("clause.if.else",)))
+
+    assert api.expand_selectors(("clause.if",)) == frozenset(
+        {
+            api.BoundaryKind.CLAUSE_IF_BODY,
+            api.BoundaryKind.CLAUSE_IF_ELIF,
+            api.BoundaryKind.CLAUSE_IF_ELSE,
+        }
+    )
+    assert api.format_source(source, policy=all_boundaries) == (
+        "if first:\n"
+        "    handle_first()\n"
+        "####\n"
+        "elif second:\n"
+        "    handle_second()\n"
+        "####\n"
+        "else:\n"
+        "    handle_default()\n"
+        "####\n"
+    )
+    assert api.format_source(source, policy=final_else).endswith(
+        "else:\n    handle_default()\n####\n"
+    )
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_loop_and_try_clause_selectors_mark_owned_suites(newline: str) -> None:
+    source = (
+        "for item in items:\n"
+        "    handle(item)\n"
+        "else:\n"
+        "    finish()\n"
+        "while ready:\n"
+        "    wait()\n"
+        "else:\n"
+        "    recover()\n"
+        "try:\n"
+        "    work()\n"
+        "except OSError:\n"
+        "    repair()\n"
+        "else:\n"
+        "    commit()\n"
+        "finally:\n"
+        "    close()\n"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("loops", "exceptions")))
+
+    formatted = api.format_source(source.replace("\n", newline), policy=policy)
+
+    assert formatted.count("####") == 8
+    assert f"    handle(item){newline}####{newline}else:" in formatted
+    assert f"    repair(){newline}####{newline}else:" in formatted
+    assert f"    close(){newline}####{newline}" in formatted
+    assert api.format_source(formatted, policy=policy) == formatted
+####
+
+
+def test_inline_clause_suites_respect_policy_filters() -> None:
+    source = "try: work()\nexcept OSError: repair()\nfinally: close()\n"
+    policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("clause.try",)),
+        skip_inline_suites=True,
+    )
+
+    assert api.format_source(source, policy=policy) == source
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_except_star_clause_selector_uses_the_handler_header(newline: str) -> None:
+    source = (
+        "try:\n"
+        "    work()\n"
+        "# A comment must not hide the following clause header.\n"
+        "except* OSError:\n"
+        "    repair()\n"
+    ).replace("\n", newline)
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("clause.try.except",)))
+
+    assert api.format_source(source, policy=policy) == (
+        "try:"
+        f"{newline}"
+        "    work()"
+        f"{newline}"
+        "# A comment must not hide the following clause header."
+        f"{newline}"
+        "except* OSError:"
+        f"{newline}"
+        "    repair()"
+        f"{newline}"
+        "####"
+        f"{newline}"
+    )
+####
+
+
+def test_policy_toml_is_strict_and_can_change_cli_output(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "example.py"
+    source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    config = tmp_path / "scope-markers.toml"
+    config.write_text('preset = "definitions"\n', encoding="utf-8")
+
+    policy = api.load_policy(config)
+    assert api.format_source(source.read_text(encoding="utf-8"), policy=policy) == (
+        "if ready:\n    work()\n"
+    )
+    assert cli.main(["--config", str(config), "--quiet", str(source)]) == 0
+    assert cli.main(["--config", str(config), "--show-settings", str(source)]) == 0
+    assert "select = [statement.class, statement.function]" in capsys.readouterr().out
+
+    config.write_text('select = ["statement.iff"]\n', encoding="utf-8")
+    with pytest.raises(api.PolicyError, match="unknown selector"):
+        api.load_policy(config)
+    ####
+####
+
+
+def test_readme_complete_policy_example_is_accepted(tmp_path: Path) -> None:
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    match = re.search(
+        r"The complete accepted configuration shape.*?```toml\n(.*?)```",
+        readme,
+        re.DOTALL,
+    )
+    assert match is not None
+
+    config = tmp_path / "pyproject.toml"
+    config.write_text(match.group(1), encoding="utf-8")
+
+    policy = api.load_policy(config)
+
+    assert api.BoundaryKind.STATEMENT_FUNCTION in policy.selected
+    assert api.BoundaryKind.CLAUSE_IF_BODY in policy.selected
+####
+
+
+def test_per_file_policy_overrides_apply_in_declaration_order(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "scope-markers.toml"
+    source = tmp_path / "src" / "module.py"
+    test_source = tmp_path / "tests" / "unit" / "module.py"
+    source.parent.mkdir()
+    test_source.parent.mkdir(parents=True)
+    source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    test_source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    config.write_text(
+        "preset = \"definitions\"\n"
+        "\n"
+        "[[per-file]]\n"
+        "patterns = [\"tests/**\"]\n"
+        "preset = \"statements\"\n"
+        "extend-select = [\"clause.if\"]\n"
+        "\n"
+        "[[per-file]]\n"
+        "patterns = [\"tests/unit/**\"]\n"
+        "ignore = [\"clause.if.body\"]\n",
+        encoding="utf-8",
+    )
+
+    source_policy = api.resolve_policy(config, source)
+    test_policy = api.resolve_policy(config, test_source)
+
+    assert source_policy.selected == api.expand_selectors(("definitions",))
+    assert api.BoundaryKind.CLAUSE_IF_ELIF in test_policy.selected
+    assert api.BoundaryKind.CLAUSE_IF_ELSE in test_policy.selected
+    assert api.BoundaryKind.CLAUSE_IF_BODY not in test_policy.selected
+    assert cli.main(["--config", str(config), "--quiet", str(source)]) == 0
+    assert cli.main(["--config", str(config), "--quiet", str(test_source)]) == 1
+    assert cli.main(["--config", str(config), "--show-settings", str(test_source)]) == 0
+    assert "clause.if.else" in capsys.readouterr().out
+####
+
+
+def test_symlink_policy_uses_lexical_path_and_config_location(tmp_path: Path) -> None:
+    source = tmp_path / "external" / "module.py"
+    link = tmp_path / "src" / "link.py"
+    config = tmp_path / "scope-markers.toml"
+    source.parent.mkdir()
+    link.parent.mkdir()
+    source.write_text("def example():\n    pass\n", encoding="utf-8")
+    config.write_text(
+        'preset = "none"\n\n'
+        '[[per-file]]\n'
+        'patterns = ["src/**"]\n'
+        'extend-select = ["statement.function"]\n',
+        encoding="utf-8",
+    )
+    try:
+        link.symlink_to(source)
+    except OSError:
+        pytest.skip("symlink creation is not permitted")
+    ####
+
+    assert api.find_config(link) == config
+    policy = api.resolve_policy(config, link)
+    assert api.BoundaryKind.STATEMENT_FUNCTION in policy.selected
+    assert cli.main(["--fix", "--quiet", str(link)]) == 0
+    assert source.read_text(encoding="utf-8").endswith("####\n")
+####
+
+
+def test_per_file_policy_overrides_are_strict(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(
+        "[[per-file]]\n"
+        "patterns = [\"src/**\"]\n"
+        "unknown-option = true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(api.PolicyError, match="per-file override 1"):
+        api.load_policy(config)
+    ####
+
+    config.write_text("[[per-file]]\npreset = \"none\"\n", encoding="utf-8")
+    with pytest.raises(api.PolicyError, match="requires at least one pattern"):
+        api.load_policy(config)
+    ####
+
+    config.write_text(
+        '[[per-file]]\npatterns = [""]\n', encoding="utf-8"
+    )
+    with pytest.raises(api.PolicyError, match="patterns must not be empty"):
+        api.load_policy(config)
+    ####
+####
+
+
+def test_explain_source_reports_filter_and_duplicate_decisions() -> None:
+    source = "if ready:\n    work()\nelse:\n    recover()\n"
+    all_policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+    inline_policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("statement.if",)),
+        skip_inline_suites=True,
+    )
+
+    explanations = api.explain_source(source, policy=all_policy)
+    inline_explanation = api.explain_source("if ready: work()\n", policy=inline_policy)
+
+    assert any(
+        explanation.kind is api.BoundaryKind.STATEMENT_IF
+        and explanation.will_mark
+        and explanation.reason == "selected"
+        for explanation in explanations
+    )
+    assert any(
+        explanation.kind is api.BoundaryKind.CLAUSE_IF_ELSE
+        and not explanation.will_mark
+        and explanation.reason == "duplicates selected statement.if boundary"
+        for explanation in explanations
+    )
+    assert inline_explanation[0].reason == "inline suite is skipped"
+####
+
+
+def test_match_case_rules_inherit_owning_match_facts(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text(
+        'select = ["clause.match.case"]\n'
+        '\n'
+        '[rules."clause.match.case"]\n'
+        'require = ["function-level", "nested"]\n',
+        encoding="utf-8",
+    )
+    source = (
+        "def outer(value: object) -> None:\n"
+        "    match value:\n"
+        "        case 1:\n"
+        "            pass\n"
+    )
+
+    policy = api.load_policy(config)
+
+    assert api.format_source(source, policy=policy).endswith(
+        "            pass\n        ####\n"
+    )
+####
+
+
+def test_cli_explain_reports_resolved_policy_decisions(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "inline.py"
+    source.write_text("if ready: work()\n", encoding="utf-8")
+
+    assert cli.main(
+        ["--select", "statement.if", "--skip-inline-suites", "--explain", str(source)]
+    ) == 0
+
+    output = capsys.readouterr().out
+    assert f"{source}:1: skip statement.if: inline suite is skipped" in output
+####
+
+
+def test_cli_rejects_explain_with_an_incompatible_operation(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "example.py"
+    source.write_text("pass\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as error:
+        cli.main(["--fix", "--explain", str(source)])
+    ####
+
+    assert error.value.code == 2
+    assert "--explain cannot be used with --fix or --diff" in capsys.readouterr().err
+####
+
+
+def test_policy_rule_predicates_and_nearest_config_apply_per_file(tmp_path: Path) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    source = nested / "example.py"
+    source.write_text("if ready:\n    work()\n", encoding="utf-8")
+    (tmp_path / "scope-markers.toml").write_text('preset = "definitions"\n', encoding="utf-8")
+    (nested / "scope-markers.toml").write_text(
+        "select = [\"statement.if\"]\n"
+        "[rules.\"statement.if\"]\nrequire = [\"has-else\"]\n",
+        encoding="utf-8",
+    )
+
+    assert cli.main(["--fix", "--quiet", str(source)]) == 0
+    assert source.read_text(encoding="utf-8") == "if ready:\n    work()\n"
+
+    assert api.load_policy(nested / "scope-markers.toml").selected == frozenset(
+        {api.BoundaryKind.STATEMENT_IF}
+    )
+####
+
+
+def test_cli_policy_options_are_listed_and_rejected_while_stripping(
+        capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["--list-selectors"]) == 0
+    assert "statement.function" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as error:
+        cli.main(["--strip", "--preset", "definitions"])
+    ####
+
+    assert error.value.code == 2
+    assert "marker-policy options cannot be used with --strip" in capsys.readouterr().err
+####
+
+
+@pytest.mark.parametrize("option", ("--select", "--extend-select", "--ignore"))
+@pytest.mark.parametrize("selector", ("", ",", "statement.if,", ",statement.if"))
+def test_cli_rejects_empty_selector_components(
+        option: str, selector: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "example.py"
+    source.write_text("def example():\n    pass\n", encoding="utf-8")
+
+    assert cli.main([option, selector, "--quiet", str(source)]) == 2
+    assert "selector names must not be empty" in capsys.readouterr().err
+####
+
+
+@pytest.mark.parametrize("option", ("--include", "--exclude"))
+def test_cli_rejects_empty_discovery_patterns(
+        option: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.main([option, "", str(tmp_path)])
+    ####
+
+    assert error.value.code == 2
+    assert "must not be empty" in capsys.readouterr().err
+####
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    (
+        (("--preset", "unknown"), "unknown preset"),
+        (("--select", "statement.unknown"), "unknown selector"),
+    ),
+)
+def test_cli_validates_policy_options_without_python_files(
+        arguments: tuple[str, str], message: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    assert cli.main([*arguments, "--quiet", str(empty)]) == 2
+    assert message in capsys.readouterr().err
+####
+
+
+def test_cli_validates_invalid_config_without_python_files(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    config = tmp_path / "scope-markers.toml"
+    config.write_text('select = ["statement.unknown"]\n', encoding="utf-8")
+
+    assert cli.main(["--config", str(config), "--quiet", str(empty)]) == 2
+    assert "unknown selector" in capsys.readouterr().err
+####
+
+
+def test_cli_preflights_nested_policies_before_rewriting_any_file(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    valid = tmp_path / "valid.py"
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    invalid = nested / "invalid.py"
+    valid_source = "def valid():\n    pass\n"
+    invalid_source = "def invalid():\n    pass\n"
+    valid.write_text(valid_source, encoding="utf-8")
+    invalid.write_text(invalid_source, encoding="utf-8")
+    (nested / "scope-markers.toml").write_text(
+        'select = ["statement.unknown"]\n', encoding="utf-8"
+    )
+
+    assert cli.main(["--fix", "--quiet", str(tmp_path)]) == 2
+    assert valid.read_text(encoding="utf-8") == valid_source
+    assert invalid.read_text(encoding="utf-8") == invalid_source
+    assert "unknown selector" in capsys.readouterr().err
 ####
 
 
@@ -2047,6 +2733,18 @@ def test_cli_strip_accepts_invalid_python_and_stub_files(
     assert cli.main(["--strip", "--mark-stubs", "--fix", "--quiet", str(stub)]) == 0
     assert stub.read_text(encoding="utf-8") == "def example() -> None: ...\n"
     assert capsys.readouterr().out == ""
+####
+
+
+def test_cli_strip_ignores_invalid_policy_configuration(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.py"
+    path.write_text("not valid Python: ####\n####\n", encoding="utf-8")
+    (tmp_path / "scope-markers.toml").write_text(
+        'select = ["statement.not-a-selector"]\n', encoding="utf-8"
+    )
+
+    assert cli.main(["--strip", "--fix", "--quiet", str(path)]) == 0
+    assert path.read_text(encoding="utf-8") == "not valid Python: ####\n"
 ####
 
 
@@ -2206,6 +2904,13 @@ def test_cli_verbose_reports_status_without_polluting_diff(
 
     assert cli.main(["--fix", "--verbose", str(path)]) == 0
     assert f"fixed: {path}" in capsys.readouterr().out
+####
+
+
+def test_display_path_escapes_output_control_characters() -> None:
+    path = Path("line\nbreak" + chr(9) + "\u202ename.py")
+
+    assert _paths.display_path(path) == r"line\nbreak\t\u202ename.py"
 ####
 
 

@@ -34,6 +34,9 @@ def _copy_unmarked_sources(destination: Path) -> None:
     for source_root in PYTHON_ROOTS:
         target_root = destination / source_root.relative_to(ROOT)
         for source in source_root.rglob("*.py"):
+            if source.is_symlink() or not source.is_file():
+                continue
+            ####
             relative = source.relative_to(source_root)
             target = target_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)

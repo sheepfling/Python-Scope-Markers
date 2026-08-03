@@ -1,23 +1,16 @@
 """Stable programmatic API for scope-marker formatting.
 
-This module is the supported import boundary for library users. The
-implementation remains in a private module so formatting internals can evolve
-without requiring callers to import private names directly. Use
-``format_source`` for in-memory text, ``inspect_file`` for read-only file
-inspection, ``process_file`` for checking or rewriting one file,
-``strip_markers``/``strip_file`` for removal, and
-``discover_python_files``/``python_files`` for discovery. Pass
-``include_stubs=True`` to the discovery functions when `.pyi` files belong in
-the result, or pass ``indent_width`` to formatting or file-inspection functions
-to normalize logical block indentation before markers are regenerated.
+Import public formatting, discovery, policy, and Markdown operations from this
+module. The implementation remains private so its internals can evolve without
+requiring callers to depend on private names.
 """
 
+from ._errors import ScopeMarkersError
 from ._implementation import (
-    FileInspection,
-    ScopeBoundary,
-    ScopeMarkersError,
     __version__,
     discover_python_files,
+    explain_file,
+    explain_source,
     format_source,
     inspect_file,
     inspect_stripped_file,
@@ -26,18 +19,52 @@ from ._implementation import (
     strip_file,
     strip_markers,
 )
+from ._markdown import (
+    format_markdown_source,
+    inspect_markdown_file,
+    process_markdown_file,
+)
+from ._policy import (
+    BoundaryKind,
+    MarkerPolicy,
+    PolicyDecision,
+    PolicyError,
+    classic_policy,
+    describe_policy,
+    expand_selectors,
+    find_config,
+    load_policy,
+    resolve_policy,
+)
+from ._types import BoundaryExplanation, FileInspection, ScopeBoundary
 
 __all__ = (
+    "BoundaryExplanation",
+    "BoundaryKind",
     "FileInspection",
+    "MarkerPolicy",
+    "PolicyDecision",
+    "PolicyError",
     "ScopeBoundary",
     "ScopeMarkersError",
     "__version__",
+    "classic_policy",
+    "describe_policy",
     "discover_python_files",
+    "expand_selectors",
+    "explain_file",
+    "explain_source",
+    "find_config",
+    "format_markdown_source",
     "format_source",
     "inspect_file",
+    "inspect_markdown_file",
     "inspect_stripped_file",
+    "load_policy",
     "process_file",
+    "process_markdown_file",
     "python_files",
+    "resolve_policy",
     "strip_file",
     "strip_markers",
 )

@@ -56,7 +56,7 @@ def test_cli_diff_uses_shared_root_without_git(
 
 
 def test_diff_quotes_surrogate_escaped_path_bytes() -> None:
-    path = "a/\udcff.py"
+    path = "a/" + chr(0xDCFF) + ".py"
     raw = os.fsencode(path)
 
     assert _diff._quote_diff_path(  # pyright: ignore[reportPrivateUsage]
@@ -72,8 +72,8 @@ def test_diff_quotes_surrogate_escaped_path_bytes() -> None:
     (
             ("space name.py", "--- a/space name.py\n"),
             ('quote"name.py', '--- "a/quote\\"name.py"\n'),
-            ("tab\tname.py", '--- "a/tab\\tname.py"\n'),
-            ("line\nbreak.py", '--- "a/line\\nbreak.py"\n'),
+            ("tab" + chr(9) + "name.py", '--- "a/tab\\tname.py"\n'),
+            ("line" + chr(10) + "break.py", '--- "a/line\\nbreak.py"\n'),
             ("emoji-😀.py", '--- "a/emoji-\\360\\237\\230\\200.py"\n'),
     ),
 )

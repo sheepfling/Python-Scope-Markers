@@ -1,11 +1,13 @@
 [build-system]
-requires = ["setuptools>=68", "setuptools-scm>=8"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "scope-markers"
 description = "Insert standalone #### comments at Python compound-statement boundaries"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dynamic = ["version"]
 dependencies = []
@@ -43,7 +45,10 @@ fallback_version = "0.1.0"
 version_scheme = "no-guess-dev"
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+# Tests do not use --lf/--ff or pytest's cache fixture. Disabling the cache
+# provider avoids shared-directory races when PyCharm and CI-style runs overlap
+# on Windows.
+addopts = "-ra -p no:cacheprovider"
 testpaths = ["tests"]
 pythonpath = [".", "src"]
 
