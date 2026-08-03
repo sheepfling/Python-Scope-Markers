@@ -74,8 +74,8 @@ def main(argv: Sequence[str] = ()) -> int:
             "By default every check is read-only. With --fix, Ruff, scope-markers, "
             "and rumdl may update files as part of validation.\n\n"
             "examples:\n"
-            "  python scripts/ci.py\n"
-            "  python scripts/ci.py --fix"
+            "  python -m scripts.ci\n"
+            "  python -m scripts.ci --fix"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

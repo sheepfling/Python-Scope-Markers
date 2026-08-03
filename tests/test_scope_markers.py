@@ -1004,7 +1004,7 @@ def test_ci_help_explains_validation_modes(capsys: pytest.CaptureFixture[str]) -
     assert exception.value.code == 0
     assert "same order as CI" in output
     assert "Ruff, scope-markers, and rumdl" in output
-    assert "python scripts/ci.py --fix" in output
+    assert "python -m scripts.ci --fix" in output
 ####
 
 

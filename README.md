@@ -812,20 +812,20 @@ fences. It does not replace the surrounding toolchain.
 git clone https://github.com/sheepfling/Python-Scope-Markers.git
 cd Python-Scope-Markers
 uv sync --extra dev
-uv run python scripts/ci.py
+uv run python -m scripts.ci
 ```
 
 Apply safe cleanup steps before validation:
 
 ```bash
-uv run python scripts/ci.py --fix
+uv run python -m scripts.ci --fix
 ```
 
 Without `uv`:
 
 ```bash
 python -m pip install -e ".[dev]"
-python scripts/ci.py
+python -m scripts.ci
 ```
 
 The CI orchestrator runs the regression suite, diff-contract checks, Ruff, Flake8, Black
