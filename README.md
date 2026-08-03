@@ -1,6 +1,5 @@
 # Scope Markers
 
-[![CI][ci-badge]][ci]
 [![Python 3.11-3.14][python-badge]][python]
 [![Runtime dependencies: none][deps-badge]][pyproject]
 
@@ -59,27 +58,26 @@ visible closing boundaries make code easier for your team to scan.
 
 Scope Markers requires Python 3.11 or newer.
 
-Install directly from the repository with `uv`:
+Install the published package with `uv`:
 
 ```bash
-uv tool install git+https://github.com/sheepfling/scope-markers.git
+uv tool install scope-markers
 ```
 
 Or with `pipx`:
 
 ```bash
-pipx install git+https://github.com/sheepfling/scope-markers.git
+pipx install scope-markers
 ```
 
 For a one-off invocation:
 
 ```bash
-uvx --from git+https://github.com/sheepfling/scope-markers.git \
-    scope-markers --diff .
+uvx scope-markers --diff .
 ```
 
-From a cloned checkout, use `uv tool install .`, `pipx install .`, or
-`python -m pip install -e .` inside a virtual environment.
+From a local checkout, change into its directory and use `uv tool install .`,
+`pipx install .`, or `python -m pip install -e .` inside a virtual environment.
 
 The installed command and module entry point are equivalent:
 
@@ -860,8 +858,7 @@ fences. It does not replace the surrounding toolchain.
 ## Development
 
 ```bash
-git clone https://github.com/sheepfling/scope-markers.git
-cd scope-markers
+cd path/to/scope-markers
 uv sync --extra dev
 uv run python -m scripts.ci
 ```
@@ -888,8 +885,6 @@ package version `0.1.0`, while untagged checkouts receive a PEP 440 development 
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
-[ci-badge]: https://github.com/sheepfling/scope-markers/actions/workflows/ci.yml/badge.svg
-[ci]: https://github.com/sheepfling/scope-markers/actions/workflows/ci.yml
 [deps-badge]: https://img.shields.io/badge/runtime%20dependencies-none-success
 [pyproject]: pyproject.toml
 [python-badge]: https://img.shields.io/badge/Python-3.11--3.14-3776AB?logo=python&logoColor=white
