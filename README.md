@@ -160,6 +160,9 @@ Available presets are `none`, `definitions`, `statements`, `classic`, and
 ```text
 statement.function  statement.class  statement.if    statement.for
 statement.while     statement.with   statement.try   statement.match
+clause.if.body      clause.if.elif    clause.if.else
+clause.for.body     clause.for.else   clause.while.body  clause.while.else
+clause.try.body     clause.try.except clause.try.else    clause.try.finally
 clause.match.case
 ```
 
@@ -201,7 +204,15 @@ scope-markers --preset definitions src
 scope-markers --select statement.match src
 scope-markers --preset classic --ignore clause.match.case src
 scope-markers --select statement.if --min-body-lines 2 src
+scope-markers --select clause.if src
+scope-markers --select clause.if.else src
 ```
+
+`statement.*` selectors close a complete compound statement. `clause.*`
+selectors close an individual suite. For example, `--preset statements` emits
+only outer boundaries, while `--select clause.if` marks each `if`, `elif`, and
+`else` suite. Selecting only `clause.if.else` marks the final `else` suite and
+does nothing for `if` chains without an `else`.
 
 `--strip` removes every managed marker and therefore cannot be combined with
 policy-selection or shape-filter options.

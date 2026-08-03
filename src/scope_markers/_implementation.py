@@ -472,6 +472,35 @@ def _match_case_header_lines(lines: Sequence[str]) -> list[int]:
 ####
 
 
+def _clause_header_lines(lines: Sequence[str]) -> Mapping[str, list[int]]:
+    """Index clause keywords at tokenizer-recognized statement starts."""
+    headers: dict[str, list[int]] = {
+        keyword: [] for keyword in ("else", "except", "finally")
+    }
+    at_statement_start = True
+    for token in _token_stream("".join(lines)):
+        if (
+                token.type == tokenize.NAME
+                and token.string in headers
+                and at_statement_start
+        ):
+            headers[token.string].append(token.start[0])
+        ####
+        if token.type == tokenize.NEWLINE:
+            at_statement_start = True
+        elif token.type not in (
+                tokenize.INDENT,
+                tokenize.DEDENT,
+                tokenize.COMMENT,
+                tokenize.NL,
+        ):
+            at_statement_start = False
+        ####
+    ####
+    return headers
+####
+
+
 def _match_case_line_number(case_header_lines: Sequence[int], pattern_line: int) -> int:
     header_index = bisect_right(case_header_lines, pattern_line) - 1
     if header_index >= 0:
@@ -529,14 +558,28 @@ def _scope_boundaries(
     parents = _parents(tree)
     nodes = _compound_nodes(tree, lines)
     case_header_lines = _match_case_header_lines(lines)
+    clause_header_lines = _clause_header_lines(lines)
     inline_headers = _inline_suite_header_lines(
         "".join(lines),
-        _compound_header_lines(tree, lines) | set(case_header_lines),
+        _compound_header_lines(tree, lines)
+        | set(case_header_lines)
+        | {line for headers in clause_header_lines.values() for line in headers},
     )
     candidates = [
         _compound_candidate(node, lines, parents, inline_headers)
         for node in nodes
     ]
+    for node in nodes:
+        candidates.extend(
+            _clause_candidates(
+                node,
+                lines,
+                parents,
+                clause_header_lines,
+                inline_headers,
+            )
+        )
+    ####
     for match in (node for node in nodes if isinstance(node, ast.Match)):
         for case in match.cases:
             candidate = _case_candidate(
@@ -551,20 +594,28 @@ def _scope_boundaries(
             ####
         ####
     ####
-    return [
-        candidate.boundary
-        for candidate in candidates
-        if policy.allows(
-            candidate.kind,
-            span_lines=candidate.span_lines,
-            suite_line_counts=candidate.suite_line_counts,
-            suite_statement_counts=candidate.suite_statement_counts,
-            clause_count=candidate.clause_count,
-            depth=candidate.depth,
-            facts=candidate.facts,
-            inline_suite=candidate.inline_suite,
-        )
-    ]
+    boundaries: list[ScopeBoundary] = []
+    seen: set[tuple[int, str]] = set()
+    for candidate in candidates:
+        if not policy.allows(
+                candidate.kind,
+                span_lines=candidate.span_lines,
+                suite_line_counts=candidate.suite_line_counts,
+                suite_statement_counts=candidate.suite_statement_counts,
+                clause_count=candidate.clause_count,
+                depth=candidate.depth,
+                facts=candidate.facts,
+                inline_suite=candidate.inline_suite,
+        ):
+            continue
+        ####
+        identity = (candidate.boundary.index, candidate.boundary.indentation)
+        if identity not in seen:
+            seen.add(identity)
+            boundaries.append(candidate.boundary)
+        ####
+    ####
+    return boundaries
 ####
 
 
@@ -962,6 +1013,23 @@ def _is_supported_source_file(
 ####
 
 
+def _clause_boundary(
+        suite: Sequence[ast.stmt], lines: Sequence[str], header_line: int
+) -> ScopeBoundary:
+    if not suite or not 1 <= header_line <= len(lines):
+        raise ScopeMarkersError("compound clause has an invalid source location")
+    ####
+    indentation = _indentation_prefix(lines[header_line - 1])
+    width = _indentation_width(indentation)
+    return ScopeBoundary(
+        index=_insertion_index(lines, suite[-1], width),
+        indentation=indentation,
+        indentation_width=width,
+        line_number=header_line,
+    )
+####
+
+
 def _compound_kind(node: ast.stmt) -> BoundaryKind:
     if isinstance(node, FUNCTION_STATEMENTS):
         return BoundaryKind.STATEMENT_FUNCTION
@@ -1169,6 +1237,241 @@ def _case_candidate(
         facts=frozenset(),
         inline_suite=case.body[0].lineno in inline_headers,
     )
+####
+
+
+def _clause_header_line(
+        keyword: str,
+        suite: Sequence[ast.stmt],
+        owner: ast.stmt,
+        lines: Sequence[str],
+        headers: Mapping[str, Sequence[int]],
+) -> int:
+    if not suite:
+        raise ScopeMarkersError(f"{keyword} clause has no body")
+    ####
+    owner_width = _header_indentation_width(owner, lines)
+    if owner_width is None:
+        raise ScopeMarkersError(f"{keyword} clause has an invalid source location")
+    ####
+    for line_number in reversed(headers[keyword]):
+        if line_number < owner.lineno:
+            break
+        ####
+        if line_number > suite[0].lineno:
+            continue
+        ####
+        if _indentation_width(_indentation_prefix(lines[line_number - 1])) == owner_width:
+            return line_number
+        ####
+    ####
+    raise ScopeMarkersError(f"{keyword} clause has no header")
+####
+
+
+def _clause_candidate(
+        kind: BoundaryKind,
+        suite: Sequence[ast.stmt],
+        lines: Sequence[str],
+        header_line: int,
+        depth: int,
+        facts: frozenset[str],
+        inline_headers: set[int],
+) -> _BoundaryCandidate:
+    boundary = _clause_boundary(suite, lines, header_line)
+    end_line = suite[-1].end_lineno or suite[-1].lineno
+    return _BoundaryCandidate(
+        kind=kind,
+        boundary=boundary,
+        span_lines=max(1, end_line - header_line + 1),
+        suite_line_counts=(_suite_line_count(suite),),
+        suite_statement_counts=(len(suite),),
+        clause_count=1,
+        depth=depth,
+        facts=facts,
+        inline_suite=suite[0].lineno in inline_headers,
+    )
+####
+
+
+def _if_clause_candidates(
+        node: ast.If,
+        lines: Sequence[str],
+        parents: Mapping[int, ast.AST],
+        headers: Mapping[str, Sequence[int]],
+        inline_headers: set[int],
+) -> list[_BoundaryCandidate]:
+    depth = _candidate_depth(node, parents) + 1
+    facts = _candidate_facts(node, parents, lines, depth)
+    candidates = [
+        _clause_candidate(
+            BoundaryKind.CLAUSE_IF_BODY,
+            node.body,
+            lines,
+            node.lineno,
+            depth,
+            facts,
+            inline_headers,
+        )
+    ]
+    current = node
+    while (
+            len(current.orelse) == 1
+            and isinstance(current.orelse[0], ast.If)
+            and _is_elif(current.orelse[0], parents, lines)
+    ):
+        current = current.orelse[0]
+        candidates.append(
+            _clause_candidate(
+                BoundaryKind.CLAUSE_IF_ELIF,
+                current.body,
+                lines,
+                current.lineno,
+                depth,
+                facts,
+                inline_headers,
+            )
+        )
+    ####
+    if current.orelse:
+        candidates.append(
+            _clause_candidate(
+                BoundaryKind.CLAUSE_IF_ELSE,
+                current.orelse,
+                lines,
+                _clause_header_line("else", current.orelse, node, lines, headers),
+                depth,
+                facts,
+                inline_headers,
+            )
+        )
+    ####
+    return candidates
+####
+
+
+def _loop_clause_candidates(
+        node: ast.For | ast.AsyncFor | ast.While,
+        lines: Sequence[str],
+        parents: Mapping[int, ast.AST],
+        headers: Mapping[str, Sequence[int]],
+        inline_headers: set[int],
+) -> list[_BoundaryCandidate]:
+    depth = _candidate_depth(node, parents) + 1
+    facts = _candidate_facts(node, parents, lines, depth)
+    body_kind, else_kind = (
+        (BoundaryKind.CLAUSE_FOR_BODY, BoundaryKind.CLAUSE_FOR_ELSE)
+        if isinstance(node, (ast.For, ast.AsyncFor))
+        else (BoundaryKind.CLAUSE_WHILE_BODY, BoundaryKind.CLAUSE_WHILE_ELSE)
+    )
+    candidates = [
+        _clause_candidate(
+            body_kind,
+            node.body,
+            lines,
+            node.lineno,
+            depth,
+            facts,
+            inline_headers,
+        )
+    ]
+    if node.orelse:
+        candidates.append(
+            _clause_candidate(
+                else_kind,
+                node.orelse,
+                lines,
+                _clause_header_line("else", node.orelse, node, lines, headers),
+                depth,
+                facts,
+                inline_headers,
+            )
+        )
+    ####
+    return candidates
+####
+
+
+def _try_clause_candidates(
+        node: ast.Try | ast.TryStar,
+        lines: Sequence[str],
+        parents: Mapping[int, ast.AST],
+        headers: Mapping[str, Sequence[int]],
+        inline_headers: set[int],
+) -> list[_BoundaryCandidate]:
+    depth = _candidate_depth(node, parents) + 1
+    facts = _candidate_facts(node, parents, lines, depth)
+    candidates = [
+        _clause_candidate(
+            BoundaryKind.CLAUSE_TRY_BODY,
+            node.body,
+            lines,
+            node.lineno,
+            depth,
+            facts,
+            inline_headers,
+        )
+    ]
+    for handler in node.handlers:
+        candidates.append(
+            _clause_candidate(
+                BoundaryKind.CLAUSE_TRY_EXCEPT,
+                handler.body,
+                lines,
+                _clause_header_line("except", handler.body, node, lines, headers),
+                depth,
+                facts,
+                inline_headers,
+            )
+        )
+    ####
+    if node.orelse:
+        candidates.append(
+            _clause_candidate(
+                BoundaryKind.CLAUSE_TRY_ELSE,
+                node.orelse,
+                lines,
+                _clause_header_line("else", node.orelse, node, lines, headers),
+                depth,
+                facts,
+                inline_headers,
+            )
+        )
+    ####
+    if node.finalbody:
+        candidates.append(
+            _clause_candidate(
+                BoundaryKind.CLAUSE_TRY_FINALLY,
+                node.finalbody,
+                lines,
+                _clause_header_line("finally", node.finalbody, node, lines, headers),
+                depth,
+                facts,
+                inline_headers,
+            )
+        )
+    ####
+    return candidates
+####
+
+
+def _clause_candidates(
+        node: ast.stmt,
+        lines: Sequence[str],
+        parents: Mapping[int, ast.AST],
+        headers: Mapping[str, Sequence[int]],
+        inline_headers: set[int],
+) -> list[_BoundaryCandidate]:
+    if isinstance(node, ast.If):
+        return _if_clause_candidates(node, lines, parents, headers, inline_headers)
+    ####
+    if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+        return _loop_clause_candidates(node, lines, parents, headers, inline_headers)
+    ####
+    if isinstance(node, TRY_STATEMENTS):
+        return _try_clause_candidates(node, lines, parents, headers, inline_headers)
+    ####
+    return []
 ####
 
 

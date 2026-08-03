@@ -2094,10 +2094,12 @@ def test_marker_policy_can_select_existing_boundary_kinds_and_filter_shapes() ->
     definitions = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
     statements = api.MarkerPolicy(selected=api.expand_selectors(("statements",)))
     cases = api.MarkerPolicy(selected=api.expand_selectors(("clause.match.case",)))
+    classic = api.classic_policy()
     nested = api.MarkerPolicy(
         selected=api.expand_selectors(("statements",)), min_depth=1
     )
 
+    assert api.format_source(source) == api.format_source(source, policy=classic)
     assert api.format_source(source, policy=definitions).count("####") == 1
     assert api.format_source(source, policy=statements).count("####") == 3
     assert api.format_source(source, policy=cases).count("####") == 1
@@ -2114,6 +2116,113 @@ def test_marker_policy_filters_inline_and_short_suites() -> None:
     )
 
     assert api.format_source(source, policy=policy) == source
+####
+
+
+def test_clause_selectors_mark_each_if_branch_without_duplicate_final_marker() -> None:
+    source = (
+        "if first:\n"
+        "    handle_first()\n"
+        "elif second:\n"
+        "    handle_second()\n"
+        "else:\n"
+        "    handle_default()\n"
+    )
+    all_boundaries = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+    final_else = api.MarkerPolicy(selected=api.expand_selectors(("clause.if.else",)))
+
+    assert api.expand_selectors(("clause.if",)) == frozenset(
+        {
+            api.BoundaryKind.CLAUSE_IF_BODY,
+            api.BoundaryKind.CLAUSE_IF_ELIF,
+            api.BoundaryKind.CLAUSE_IF_ELSE,
+        }
+    )
+    assert api.format_source(source, policy=all_boundaries) == (
+        "if first:\n"
+        "    handle_first()\n"
+        "####\n"
+        "elif second:\n"
+        "    handle_second()\n"
+        "####\n"
+        "else:\n"
+        "    handle_default()\n"
+        "####\n"
+    )
+    assert api.format_source(source, policy=final_else).endswith(
+        "else:\n    handle_default()\n####\n"
+    )
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_loop_and_try_clause_selectors_mark_owned_suites(newline: str) -> None:
+    source = (
+        "for item in items:\n"
+        "    handle(item)\n"
+        "else:\n"
+        "    finish()\n"
+        "while ready:\n"
+        "    wait()\n"
+        "else:\n"
+        "    recover()\n"
+        "try:\n"
+        "    work()\n"
+        "except OSError:\n"
+        "    repair()\n"
+        "else:\n"
+        "    commit()\n"
+        "finally:\n"
+        "    close()\n"
+    )
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("loops", "exceptions")))
+
+    formatted = api.format_source(source.replace("\n", newline), policy=policy)
+
+    assert formatted.count("####") == 8
+    assert f"    handle(item){newline}####{newline}else:" in formatted
+    assert f"    repair(){newline}####{newline}else:" in formatted
+    assert f"    close(){newline}####{newline}" in formatted
+    assert api.format_source(formatted, policy=policy) == formatted
+####
+
+
+def test_inline_clause_suites_respect_policy_filters() -> None:
+    source = "try: work()\nexcept OSError: repair()\nfinally: close()\n"
+    policy = api.MarkerPolicy(
+        selected=api.expand_selectors(("clause.try",)),
+        skip_inline_suites=True,
+    )
+
+    assert api.format_source(source, policy=policy) == source
+####
+
+
+@pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
+def test_except_star_clause_selector_uses_the_handler_header(newline: str) -> None:
+    source = (
+        "try:\n"
+        "    work()\n"
+        "# A comment must not hide the following clause header.\n"
+        "except* OSError:\n"
+        "    repair()\n"
+    ).replace("\n", newline)
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("clause.try.except",)))
+
+    assert api.format_source(source, policy=policy) == (
+        "try:"
+        f"{newline}"
+        "    work()"
+        f"{newline}"
+        "# A comment must not hide the following clause header."
+        f"{newline}"
+        "except* OSError:"
+        f"{newline}"
+        "    repair()"
+        f"{newline}"
+        "####"
+        f"{newline}"
+    )
 ####
 
 

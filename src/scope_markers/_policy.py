@@ -29,12 +29,28 @@ class BoundaryKind(StrEnum):
     STATEMENT_WITH = "statement.with"
     STATEMENT_TRY = "statement.try"
     STATEMENT_MATCH = "statement.match"
+    CLAUSE_IF_BODY = "clause.if.body"
+    CLAUSE_IF_ELIF = "clause.if.elif"
+    CLAUSE_IF_ELSE = "clause.if.else"
+    CLAUSE_FOR_BODY = "clause.for.body"
+    CLAUSE_FOR_ELSE = "clause.for.else"
+    CLAUSE_WHILE_BODY = "clause.while.body"
+    CLAUSE_WHILE_ELSE = "clause.while.else"
+    CLAUSE_TRY_BODY = "clause.try.body"
+    CLAUSE_TRY_EXCEPT = "clause.try.except"
+    CLAUSE_TRY_ELSE = "clause.try.else"
+    CLAUSE_TRY_FINALLY = "clause.try.finally"
     CLAUSE_MATCH_CASE = "clause.match.case"
 ####
 
 
 ALL_BOUNDARY_KINDS: Final = frozenset(BoundaryKind)
-CLASSIC_BOUNDARY_KINDS: Final = ALL_BOUNDARY_KINDS
+STATEMENT_BOUNDARY_KINDS: Final = frozenset(
+    kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("statement.")
+)
+CLASSIC_BOUNDARY_KINDS: Final = STATEMENT_BOUNDARY_KINDS | {
+    BoundaryKind.CLAUSE_MATCH_CASE
+}
 
 SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
     {
@@ -43,16 +59,27 @@ SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType
         "definitions": frozenset(
             {BoundaryKind.STATEMENT_FUNCTION, BoundaryKind.STATEMENT_CLASS}
         ),
-        "statements": frozenset(
-            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("statement.")
-        ),
+        "statements": STATEMENT_BOUNDARY_KINDS,
         "clauses": frozenset(
             kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("clause.")
         ),
-        "conditionals": frozenset({BoundaryKind.STATEMENT_IF}),
-        "loops": frozenset({BoundaryKind.STATEMENT_FOR, BoundaryKind.STATEMENT_WHILE}),
+        "conditionals": frozenset(
+            kind for kind in ALL_BOUNDARY_KINDS if kind.value.startswith("statement.if")
+            or kind.value.startswith("clause.if.")
+        ),
+        "loops": frozenset(
+            kind
+            for kind in ALL_BOUNDARY_KINDS
+            if kind.value.startswith(
+                ("statement.for", "statement.while", "clause.for.", "clause.while.")
+            )
+        ),
         "contexts": frozenset({BoundaryKind.STATEMENT_WITH}),
-        "exceptions": frozenset({BoundaryKind.STATEMENT_TRY}),
+        "exceptions": frozenset(
+            kind
+            for kind in ALL_BOUNDARY_KINDS
+            if kind.value.startswith(("statement.try", "clause.try."))
+        ),
         "patterns": frozenset({BoundaryKind.STATEMENT_MATCH, BoundaryKind.CLAUSE_MATCH_CASE}),
     }
 )
