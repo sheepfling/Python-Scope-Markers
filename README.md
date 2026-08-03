@@ -721,6 +721,38 @@ repos:
 The repository also includes `.pre-commit-hooks.yaml` for a remote Python hook. Pin a
 release tag or commit when consuming it from another repository.
 
+### CI integration
+
+When a project uses both `scope-markers` and `mdrepo`, install the pinned alpha releases in
+the development environment:
+
+```toml
+[project.optional-dependencies]
+dev = [
+    "mdrepo==0.0.1a0",
+    "scope-markers==0.0.1a0",
+]
+```
+
+Run from the repository root. Apply rewriting tools before the read-only gate:
+
+```bash
+ruff check --fix
+python -m scope_markers --fix src scripts tests
+ruff check
+python -m scope_markers src scripts tests
+pytest
+python -m mdrepo check .
+```
+
+`--fix` changes Python files; the check invocation is read-only and returns `1` when markers
+are missing or stale. Both commands scan every Python tree participating in the project, not
+just `src/`. Use `--exclude` or project configuration for generated, scratch, vendor, or legacy
+paths. Scope Markers skips its documented default directories, including `.git`, `.venv`, build
+outputs, and caches. On Windows, use `python -m scope_markers` rather than relying on an
+installed shell executable. Exit status `2` indicates a configuration, discovery, parsing,
+encoding, diff, or I/O failure.
+
 ## Programmatic API
 
 Import supported functions from `scope_markers.api`, not from the intentionally minimal
