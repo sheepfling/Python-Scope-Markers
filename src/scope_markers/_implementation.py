@@ -1749,7 +1749,7 @@ def _walk_python_files(
         names[:] = kept_directories
         for name in sorted(filenames):
             candidate = current / name
-            if candidate.is_symlink():
+            if candidate.is_symlink() or not candidate.is_file():
                 continue
             ####
             if _is_discoverable_file(

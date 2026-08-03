@@ -5,10 +5,12 @@ import re
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import suppress
 from importlib.metadata import entry_points
 from importlib.metadata import version as installed_version
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -1824,6 +1826,26 @@ def test_discovery_matches_absolute_include_and_exclude_patterns(
         "kept.py",
         "other/included.bzl",
     ]
+    assert errors == []
+####
+
+
+def test_recursive_discovery_skips_non_regular_supported_entries(tmp_path: Path) -> None:
+    mkfifo = cast(Callable[[str], None] | None, getattr(os, "mkfifo", None))
+    if mkfifo is None:
+        pytest.skip("FIFO creation is unavailable")
+    ####
+
+    fifo = tmp_path / "pipe.py"
+    try:
+        mkfifo(os.fspath(fifo))
+    except (OSError, NotImplementedError):
+        pytest.skip("FIFO creation is not permitted")
+    ####
+
+    files, errors = api.discover_python_files([tmp_path])
+
+    assert files == []
     assert errors == []
 ####
 
