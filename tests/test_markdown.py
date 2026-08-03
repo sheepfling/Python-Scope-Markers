@@ -348,6 +348,24 @@ def test_process_markdown_file_has_stable_check_and_fix_results(tmp_path: Path) 
 ####
 
 
+def test_process_markdown_file_formats_fence_errors_with_location(
+        tmp_path: Path,
+) -> None:
+    path = tmp_path / "README.md"
+    path.write_text(
+        "# Example\n\n```python\ndef broken(:\n    pass\n```\n",
+        encoding="utf-8",
+    )
+
+    changed, error = api.process_markdown_file(path, fix=False)
+
+    assert changed is False
+    assert error is not None
+    assert f"{path}:2:0:" in error
+    assert "unexpected EOF in multi-line statement" in error
+####
+
+
 def test_markdown_files_are_discovered_only_when_requested(tmp_path: Path) -> None:
     path = tmp_path / "README.md"
     path.write_text("```python\npass\n```\n", encoding="utf-8")

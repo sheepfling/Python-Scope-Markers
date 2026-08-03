@@ -10,6 +10,7 @@ from pathlib import Path
 from ._implementation import (
     FILE_PROCESSING_ERRORS,
     FileInspection,
+    _error_message,  # pyright: ignore[reportPrivateUsage]
     _physical_lines,  # pyright: ignore[reportPrivateUsage]
     _read_source,  # pyright: ignore[reportPrivateUsage]
     _write_atomic,  # pyright: ignore[reportPrivateUsage]
@@ -245,7 +246,7 @@ def process_markdown_file(
             _write_atomic(path, inspection.formatted.encode(inspection.encoding))
         ####
     except FILE_PROCESSING_ERRORS as error:
-        return False, f"{path}: {error}"
+        return False, _error_message(path, error)
     ####
     return inspection.changed, None
 ####
