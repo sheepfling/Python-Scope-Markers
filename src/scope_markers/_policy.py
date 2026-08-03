@@ -61,14 +61,22 @@ COMPLETE_STATEMENT_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
 STATEMENTS_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
     (*COMPLETE_STATEMENT_BOUNDARY_KINDS, BoundaryKind.CLAUSE_MATCH_CASE)
 )
+DEFINITION_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = frozenset(
+    {
+        BoundaryKind.STATEMENT_FUNCTION,
+        BoundaryKind.STATEMENT_CLASS,
+    }
+)
+LOGIC_BOUNDARY_KINDS: Final[frozenset[BoundaryKind]] = (
+    STATEMENTS_BOUNDARY_KINDS - DEFINITION_BOUNDARY_KINDS
+)
 
 SELECTOR_GROUPS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
     {
         "all": ALL_BOUNDARY_KINDS,
         "complete-statements": COMPLETE_STATEMENT_BOUNDARY_KINDS,
-        "definitions": frozenset(
-            {BoundaryKind.STATEMENT_FUNCTION, BoundaryKind.STATEMENT_CLASS}
-        ),
+        "definitions": DEFINITION_BOUNDARY_KINDS,
+        "logic": LOGIC_BOUNDARY_KINDS,
         "statements": STATEMENTS_BOUNDARY_KINDS,
         "clauses": frozenset(
             kind for kind in ALL_BOUNDARY_KINDS if str(kind).startswith("clause.")
@@ -98,10 +106,12 @@ PRESETS: Final[Mapping[str, frozenset[BoundaryKind]]] = MappingProxyType(
     {
         "none": frozenset(),
         "definitions": SELECTOR_GROUPS["definitions"],
+        "logic": SELECTOR_GROUPS["logic"],
         "statements": SELECTOR_GROUPS["statements"],
         "all": ALL_BOUNDARY_KINDS,
     }
 )
+FINAL_CASE_ONLY_PRESETS: Final[frozenset[str]] = frozenset({"logic", "statements"})
 
 _GENERIC_PREDICATES: Final = frozenset(
     {"nested", "module-level", "class-level", "function-level", "stub"}
@@ -426,7 +436,7 @@ def policy_with_cli_overrides(
         base_selection = PRESETS[preset]
         extensions = frozenset[BoundaryKind]()
         exclusions = frozenset[BoundaryKind]()
-        final_case_only = preset == "statements"
+        final_case_only = preset in FINAL_CASE_ONLY_PRESETS
     ####
     if select:
         base_selection = expand_selectors(selector_values(select))
@@ -534,7 +544,7 @@ def _apply_settings(policy: MarkerPolicy, settings: Mapping[str, object]) -> Mar
             raise PolicyError(f"unknown preset {preset!r}; expected one of {', '.join(PRESETS)}")
         ####
         base_selection = PRESETS[preset]
-        final_case_only = preset == "statements"
+        final_case_only = preset in FINAL_CASE_ONLY_PRESETS
     ####
     if "select" in settings:
         base_selection = expand_selectors(_string_array(settings, "select"))

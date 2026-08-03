@@ -8,7 +8,7 @@ from scope_markers import api, cli
 
 
 @pytest.mark.parametrize(
-    "preset", ("none", "definitions", "statements", "all")
+    "preset", ("none", "definitions", "logic", "statements", "all")
 )
 def test_every_policy_preset_loads_and_expands(preset: str, tmp_path: Path) -> None:
     config = tmp_path / "scope-markers.toml"
@@ -47,6 +47,31 @@ def test_all_preset_marks_every_match_case(tmp_path: Path) -> None:
     )
 
     assert api.format_source(source, policy=api.load_policy(config)).count("####") == 3
+####
+
+
+def test_logic_preset_marks_control_flow_without_definitions(tmp_path: Path) -> None:
+    config = tmp_path / "scope-markers.toml"
+    config.write_text('preset = "logic"\n', encoding="utf-8")
+    source = (
+        "def helper() -> None:\n"
+        "    pass\n"
+        "if ready:\n"
+        "    work()\n"
+        "else:\n"
+        "    recover()\n"
+        "match value:\n"
+        "    case 1:\n"
+        "        handle_one()\n"
+        "    case _:\n"
+        "        handle_other()\n"
+    )
+
+    formatted = api.format_source(source, policy=api.load_policy(config))
+
+    assert formatted.count("####") == 3
+    assert "    pass\nif ready:" in formatted
+    assert formatted.endswith("        handle_other()\n    ####\n####\n")
 ####
 
 

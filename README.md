@@ -128,15 +128,19 @@ The built-in presets cover the common policies:
 |---|---|
 | `none` | No generated markers |
 | `definitions` | Complete functions and classes |
+| `logic` | Complete control-flow statements plus the final `match case` |
 | `statements` (recommended) | Complete compound statements plus the final `match case` |
 | `all` | Every supported statement and clause boundary |
 
 `statements` is the default and recommended preset for a clear, low-noise boundary
-convention. Use `all` when you also want markers after intermediate branches and every
-`match` case.
+convention. Use `definitions` when only functions, methods, and classes should be closed;
+use `logic` when definitions should remain untouched but control-flow scopes should be
+closed. Use `all` when you also want markers after intermediate branches and every `match`
+case.
 
 ```bash
 scope-markers --preset definitions --fix src
+scope-markers --preset logic --fix src
 scope-markers --preset statements --fix src
 scope-markers --preset statements --ignore clause.match.case --fix src
 ```
@@ -184,7 +188,7 @@ This avoids a separate boolean option for every Python statement form.
 | `clause.match.case`  | Each `case` suite                  |
 
 Selectors may be exact names, groups, or namespace prefixes. The groups are
-`complete-statements`, `definitions`, `statements`, `clauses`, `conditionals`, `loops`, `contexts`,
+`complete-statements`, `definitions`, `logic`, `statements`, `clauses`, `conditionals`, `loops`, `contexts`,
 `exceptions`, and `patterns`.
 
 For example, `clause.if` expands to every `clause.if.*` selector:
@@ -278,7 +282,7 @@ The complete accepted configuration shape is:
 
 ```toml
 [tool.scope-markers]
-preset = "statements"               # none, definitions, statements, all
+preset = "statements"               # none, definitions, logic, statements, all
 # select = ["definitions"]          # replace the preset selection
 extend-select = ["clause.if"]       # add selectors, groups, or prefixes
 ignore = ["clause.match.case"]      # subtract selectors
@@ -364,6 +368,16 @@ Definitions only:
 [tool.scope-markers]
 preset = "definitions"
 ```
+
+Logic scopes only:
+
+```toml
+[tool.scope-markers]
+preset = "logic"
+```
+
+This leaves function, method, and class bodies untouched while closing control-flow
+statements and the final case of each `match`.
 
 Complete statements without branch or case markers:
 
