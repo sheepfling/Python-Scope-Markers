@@ -67,6 +67,34 @@ def test_indent_width_normalizes_blocks_and_regenerates_markers(newline: str) ->
 ####
 
 
+@pytest.mark.parametrize(("existing_marker", "expected_marker"), (("", "####"), ("##\n", "##")))
+def test_indent_width_does_not_mark_parenthesized_continuations(
+        existing_marker: str, expected_marker: str
+) -> None:
+    source = (
+        "if ready:\n"
+        "    values = (\n"
+        "        first\n"
+        "        + second\n"
+        "    )\n"
+        f"{existing_marker}"
+    )
+
+    formatted = scope_markers.format_source(source, indent_width=2)
+
+    assert formatted == (
+        "if ready:\n"
+        "  values = (\n"
+        "        first\n"
+        "        + second\n"
+        "    )\n"
+        f"{expected_marker}\n"
+    )
+    assert formatted.count(expected_marker) == 1
+    assert scope_markers.format_source(formatted, indent_width=2) == formatted
+####
+
+
 def test_indent_width_preserves_continuation_alignment_and_converts_block_tabs() -> None:
     source = (
         "if ready:\n"
