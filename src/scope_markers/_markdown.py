@@ -164,7 +164,7 @@ def format_markdown_source(
         )
         formatted_lines[index + 1:closing_index] = restored
         lines = tuple(formatted_lines)
-        index = index + 1 + len(restored)
+        index = index + 2 + len(restored)
     ####
     return "".join(formatted_lines)
 ####

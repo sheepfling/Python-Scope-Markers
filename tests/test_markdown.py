@@ -54,6 +54,38 @@ def test_format_markdown_source_formats_python_fences_only() -> None:
 ####
 
 
+def test_format_markdown_source_processes_every_python_fence() -> None:
+    source = (
+        "```python\n"
+        "def first():\n"
+        "    pass\n"
+        "```\n"
+        "\n"
+        "```python\n"
+        "class Second:\n"
+        "    pass\n"
+        "```\n"
+    )
+
+    formatted = api.format_markdown_source(source)
+
+    assert formatted == (
+        "```python\n"
+        "def first():\n"
+        "    pass\n"
+        "####\n"
+        "```\n"
+        "\n"
+        "```python\n"
+        "class Second:\n"
+        "    pass\n"
+        "####\n"
+        "```\n"
+    )
+    assert api.format_markdown_source(formatted) == formatted
+####
+
+
 def test_format_markdown_source_skips_python_looking_fences_inside_text() -> None:
     source = (
         "~~~text\n"
