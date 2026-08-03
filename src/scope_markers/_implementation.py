@@ -120,6 +120,40 @@ def _is_clause_candidate(candidate: _BoundaryCandidate) -> bool:
 ####
 
 
+def _is_statement_candidate(candidate: _BoundaryCandidate) -> bool:
+    """Return whether a candidate represents a complete compound statement."""
+    return candidate.kind.value.startswith("statement.")
+####
+
+
+def _directive_candidate_sort_key(
+        candidate: _BoundaryCandidate,
+) -> tuple[int, int, int, str]:
+    """Order candidates by source header, preferring its complete statement."""
+    return (
+        candidate.boundary.line_number,
+        1 if _is_clause_candidate(candidate) else 0,
+        candidate.boundary.index,
+        str(candidate.kind),
+    )
+####
+
+
+def _next_directive_candidate(
+        candidates: Sequence[_BoundaryCandidate], row: int
+) -> _BoundaryCandidate | None:
+    """Return the next semantic boundary after a source directive row."""
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.boundary.line_number > row
+        ),
+        None,
+    )
+####
+
+
 def _first_content_row(lines: Sequence[str]) -> int | None:
     return next(
         (row for row, line in enumerate(lines, start=1) if _line_body(line).strip()),
@@ -652,36 +686,17 @@ def _ignored_candidate_identities(
             for candidate in candidates
             if _candidate_decision(candidate, policy).allowed
         ),
-        key=lambda candidate: (
-            candidate.boundary.line_number,
-            1 if _is_clause_candidate(candidate) else 0,
-            candidate.boundary.index,
-            str(candidate.kind),
-        ),
+        key=_directive_candidate_sort_key,
     )
     ignored: set[_CandidateIdentity] = set()
     for row in sorted(ignore_next_rows):
-        target = next(
-            (
-                candidate
-                for candidate in selected
-                if candidate.boundary.line_number > row
-            ),
-            None,
-        )
+        target = _next_directive_candidate(selected, row)
         if target is not None:
             ignored.add(_candidate_identity(target))
         ####
     ####
     for row in sorted(ignore_next_block_rows):
-        target = next(
-            (
-                candidate
-                for candidate in selected
-                if candidate.boundary.line_number > row
-            ),
-            None,
-        )
+        target = _next_directive_candidate(selected, row)
         if target is None:
             continue
         ####
@@ -695,7 +710,7 @@ def _ignored_candidate_identities(
                     continue
                 ####
                 if (
-                        candidate.kind.value.startswith("statement.")
+                        _is_statement_candidate(candidate)
                         and id(candidate.owner) == id(target.owner)
                 ):
                     continue

@@ -1444,6 +1444,19 @@ def test_ignore_next_block_prefers_complete_statement_on_shared_header(
 ####
 
 
+def test_ignore_next_targets_complete_statement_on_shared_header() -> None:
+    source = "# scope-markers: ignore-next\nif ready: work()\n"
+    policy = api.MarkerPolicy(selected=api.expand_selectors(("all",)))
+
+    explanations = scope_markers.explain_source(source, policy=policy)
+
+    assert explanations[0].kind is api.BoundaryKind.STATEMENT_IF
+    assert explanations[0].reason == "ignored by source directive"
+    assert explanations[1].kind is api.BoundaryKind.CLAUSE_IF_BODY
+    assert explanations[1].will_mark is True
+####
+
+
 def test_ignore_next_clause_targets_logical_candidate_not_shared_marker() -> None:
     source = (
         "if ready:\n"
