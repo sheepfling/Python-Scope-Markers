@@ -254,7 +254,7 @@ def test_per_file_preset_preserves_accumulated_selector_arithmetic(tmp_path: Pat
         "\n"
         "[[per-file]]\n"
         'patterns = ["src/**"]\n'
-        'preset = "statements"\n',
+        'preset = "all"\n',
         encoding="utf-8",
     )
     source.write_text("if ready:\n    work()\nelse:\n    recover()\n", encoding="utf-8")
