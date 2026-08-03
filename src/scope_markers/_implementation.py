@@ -312,25 +312,59 @@ def _token_stream(source: str) -> Iterable[tokenize.TokenInfo]:
 ####
 
 
-def _standalone_marker_lines(source: str, marker: str) -> set[int]:
-    lines = _physical_lines(source)
+def _marker_lines_from_tokens(
+        tokens: Iterable[tokenize.TokenInfo], lines: Sequence[str], marker: str
+) -> set[int]:
     marker_lines: set[int] = set()
-    for token in _token_stream(source):
+    for token in tokens:
         if token.type != tokenize.COMMENT or token.string.rstrip(" \t\f") != marker:
             continue
         ####
-        row, column = token.start
-        if not 1 <= row <= len(lines):
-            continue
-        ####
-        line = _line_body(lines[row - 1])
-        before = line[:column]
-        after = line[token.end[1]:]
-        if not before.strip(" \t\f") and not after.strip(" \t\f"):
+        row = token.start[0]
+        if 1 <= row <= len(lines) and _line_body(lines[row - 1]).strip(" \t\f") == marker:
             marker_lines.add(row - 1)
         ####
     ####
     return marker_lines
+####
+
+
+def _indentation_safe_source(source: str) -> str:
+    """Make indentation recoverable for lexical comment scanning."""
+    levels = [0]
+    normalized: list[str] = []
+    for line in _physical_lines(source):
+        body = _line_body(line)
+        prefix_length = len(body) - len(body.lstrip(" \t\f"))
+        if not body.strip(" \t\f"):
+            normalized.append(line)
+            continue
+        ####
+        width = _indentation_width(body[:prefix_length])
+        if width > levels[-1]:
+            levels.append(width)
+        elif width in levels:
+            levels = levels[: levels.index(width) + 1]
+        else:
+            width = max(level for level in levels if level < width)
+            levels = levels[: levels.index(width) + 1]
+        ####
+        ending = _line_ending(line) or ""
+        normalized.append(" " * width + body[prefix_length:] + ending)
+    ####
+    return "".join(normalized)
+####
+
+
+def _standalone_marker_lines(source: str, marker: str) -> set[int]:
+    lines = _physical_lines(source)
+    try:
+        return _marker_lines_from_tokens(_token_stream(source), lines, marker)
+    except IndentationError:
+        return _marker_lines_from_tokens(
+            _token_stream(_indentation_safe_source(source)), lines, marker
+        )
+    ####
 ####
 
 

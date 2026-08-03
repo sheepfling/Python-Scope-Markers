@@ -2021,6 +2021,17 @@ def test_strip_file_returns_diagnostic_for_invalid_encoding_declaration(
 ####
 
 
+def test_strip_file_recovers_from_invalid_unindent_before_marker(
+        tmp_path: Path,
+) -> None:
+    path = tmp_path / "invalid-unindent.py"
+    path.write_text("if ready:\n    pass\n  ####\n", encoding="utf-8")
+
+    assert api.strip_file(path, fix=True) == (True, None)
+    assert path.read_text(encoding="utf-8") == "if ready:\n    pass\n"
+####
+
+
 def test_programmatic_api_surface_is_complete_and_usable(tmp_path: Path) -> None:
     assert api.__all__ == (
         "BoundaryExplanation",
@@ -2289,6 +2300,34 @@ def test_per_file_policy_overrides_apply_in_declaration_order(
     assert cli.main(["--config", str(config), "--quiet", str(test_source)]) == 1
     assert cli.main(["--config", str(config), "--show-settings", str(test_source)]) == 0
     assert "clause.if.else" in capsys.readouterr().out
+####
+
+
+def test_symlink_policy_uses_lexical_path_and_config_location(tmp_path: Path) -> None:
+    source = tmp_path / "external" / "module.py"
+    link = tmp_path / "src" / "link.py"
+    config = tmp_path / "scope-markers.toml"
+    source.parent.mkdir()
+    link.parent.mkdir()
+    source.write_text("def example():\n    pass\n", encoding="utf-8")
+    config.write_text(
+        'preset = "none"\n\n'
+        '[[per-file]]\n'
+        'patterns = ["src/**"]\n'
+        'extend-select = ["statement.function"]\n',
+        encoding="utf-8",
+    )
+    try:
+        link.symlink_to(source)
+    except OSError:
+        pytest.skip("symlink creation is not permitted")
+    ####
+
+    assert api.find_config(link) == config
+    policy = api.resolve_policy(config, link)
+    assert api.BoundaryKind.STATEMENT_FUNCTION in policy.selected
+    assert cli.main(["--fix", "--quiet", str(link)]) == 0
+    assert source.read_text(encoding="utf-8").endswith("####\n")
 ####
 
 

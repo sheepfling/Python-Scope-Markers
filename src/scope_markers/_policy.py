@@ -534,15 +534,16 @@ def _per_file_overrides(settings: Mapping[str, object]) -> tuple[_PerFileOverrid
 
 
 def _matches_per_file_pattern(path: Path, directory: Path, patterns: tuple[str, ...]) -> bool:
+    lexical = path.absolute()
     resolved = path.resolve(strict=False)
     try:
-        relative = resolved.relative_to(directory).as_posix()
+        lexical_relative = lexical.relative_to(directory).as_posix()
     except ValueError:
-        relative = None
+        lexical_relative = None
     ####
-    candidates = (path.name, resolved.as_posix())
-    if relative is not None:
-        candidates += (relative,)
+    candidates = [path.name, lexical.as_posix(), resolved.as_posix()]
+    if lexical_relative is not None:
+        candidates.append(lexical_relative)
     ####
     return any(
         fnmatchcase(candidate, pattern) for candidate in candidates for pattern in patterns
@@ -562,7 +563,8 @@ def _validate_settings(
 
 def find_config(start: Path) -> Path | None:
     """Find the nearest supported configuration, starting at ``start``."""
-    directory = start.resolve() if start.is_dir() else start.resolve().parent
+    lexical = start.absolute()
+    directory = lexical if start.is_dir() else lexical.parent
     while True:
         for name in ("scope-markers.toml", ".scope-markers.toml", "pyproject.toml"):
             candidate = directory / name

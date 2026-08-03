@@ -141,6 +141,45 @@ def test_format_markdown_source_can_strip_fenced_markers() -> None:
 ####
 
 
+def test_cli_markdown_strip_only_removes_markers_from_python_fences(
+        tmp_path: Path,
+) -> None:
+    path = tmp_path / "README.md"
+    source = (
+        "```python\n"
+        "def example():\n"
+        "    pass\n"
+        "####\n"
+        "```\n"
+        "```text\n"
+        "literal marker: ####\n"
+        "```\n"
+        "```python no-scope-markers\n"
+        "def opted_out():\n"
+        "    pass\n"
+        "####\n"
+        "```\n"
+    )
+    path.write_text(source, encoding="utf-8")
+
+    assert cli.main(["--markdown", "--strip", "--fix", "--quiet", str(path)]) == 0
+    assert path.read_text(encoding="utf-8") == (
+        "```python\n"
+        "def example():\n"
+        "    pass\n"
+        "```\n"
+        "```text\n"
+        "literal marker: ####\n"
+        "```\n"
+        "```python no-scope-markers\n"
+        "def opted_out():\n"
+        "    pass\n"
+        "####\n"
+        "```\n"
+    )
+####
+
+
 def test_format_markdown_source_uses_the_supplied_marker_policy() -> None:
     source = "```python\ndef example():\n    if ready:\n        pass\n```\n"
     policy = api.MarkerPolicy(selected=api.expand_selectors(("definitions",)))
