@@ -133,6 +133,15 @@ functions are also available for callers that need inspection or atomic writes:
 `inspect_file`, `process_file`, `strip_markers`, `strip_file`, and
 `discover_python_files`.
 
+Markdown fences are opt-in and use the same formatter inside each standalone
+`python`, `py`, or `python3` fenced block:
+
+```python
+from scope_markers.api import format_markdown_source
+
+formatted = format_markdown_source(markdown_text)
+```
+
 ## Discovery and common options
 
 With no paths, the current directory is scanned recursively. Common VCS,
@@ -154,6 +163,7 @@ workflow:
 
 ```bash
 scope-markers --strip --fix src tests   # remove standalone scope markers
+scope-markers --markdown --fix README.md # format Python Markdown fences
 scope-markers --mark-stubs --fix src     # include .pyi files
 scope-markers --indent-width 2 --fix src # normalize block indentation
 scope-markers --verbose src tests        # report every file's status
@@ -276,6 +286,18 @@ scope-markers --include "*.bzl" --exclude vendor --fix .
 
 Included files still need to be parseable by Python's AST, and exclusions and
 generated-directory pruning take precedence.
+
+To process Markdown files from the CLI, add `--markdown`:
+
+```bash
+scope-markers --markdown README.md docs --fix
+scope-markers --markdown --strip --fix README.md docs
+```
+
+Only `python`, `py`, and `python3` fenced blocks are processed. Other Markdown
+content and non-Python fences remain unchanged. Each Python fence must be valid
+as a standalone Python source fragment; a fence cannot continue a class or
+function from another fence.
 
 Exit statuses are stable:
 

@@ -10,9 +10,11 @@ from pathlib import Path
 from ._diff import render_diff, write_diff
 from ._implementation import (
     FILE_PROCESSING_ERRORS,
+    MARKDOWN_SUFFIXES,
     format_error,
     write_atomic,
 )
+from ._markdown import inspect_markdown_file
 from .api import (
     __version__,
     discover_python_files,
@@ -20,7 +22,8 @@ from .api import (
     inspect_stripped_file,
 )
 
-_DESCRIPTION = """Inspect Python source and add or remove standalone scope-marker comments.
+_DESCRIPTION = """Inspect Python source or Python Markdown fences and add or remove
+standalone scope-marker comments.
 
 The default mode checks files without changing them and exits with status 1 when
 markers would be added or regenerated. Use --fix to rewrite files, or --diff to
@@ -33,6 +36,7 @@ _EPILOG = """examples:
   scope-markers --diff src tests
   scope-markers --fix --indent-width 2 src
   scope-markers --strip --fix src tests
+  scope-markers --markdown --fix README.md
 
 Use --help with a command installed as either `scope-markers` or
 `python -m scope_markers`."""
@@ -78,6 +82,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include recursively discovered .pyi files; mark documentation-only "
         "and ellipsis-only definitions",
+    )
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help="process Python code fences in recursively discovered .md and .markdown files",
     )
     parser.add_argument(
         "--indent-width",
@@ -152,6 +161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     show_diff = bool(args.diff)
     strip = bool(args.strip)
     mark_stubs = bool(args.mark_stubs)
+    include_markdown = bool(args.markdown)
     indent_width = args.indent_width if isinstance(args.indent_width, int) else None
     quiet = bool(args.quiet)
     verbose = bool(args.verbose)
@@ -169,6 +179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exclude_patterns=exclude_patterns,
         use_default_excludes=use_default_excludes,
         include_stubs=mark_stubs,
+        include_markdown=include_markdown,
     )
     if errors and fail_fast:
         _report_errors(errors)
@@ -179,7 +190,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path in files:
         processed_files += 1
         try:
-            if strip:
+            if include_markdown and path.suffix.casefold() in MARKDOWN_SUFFIXES:
+                inspection = inspect_markdown_file(
+                    path,
+                    mark_stubs=mark_stubs,
+                    indent_width=indent_width,
+                    strip=strip,
+                )
+            elif strip:
                 inspection = inspect_stripped_file(path)
             else:
                 inspection = inspect_file(

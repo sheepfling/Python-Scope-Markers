@@ -47,6 +47,7 @@ FILE_PROCESSING_ERRORS: Final = (
 # ``##`` or ``####`` for compatibility with an already-formatted source tree.
 MARKER: Final = "####"
 MARKER_STYLES: Final = ("##", "####")
+MARKDOWN_SUFFIXES: Final = frozenset({".md", ".markdown"})
 # These are generated, cached, or environment-managed trees that should not
 # be traversed by default. The CLI exposes --no-default-excludes when needed.
 DEFAULT_SKIP_DIRECTORIES: Final = frozenset(
@@ -913,11 +914,16 @@ def _is_supported_source_file(
         root: Path,
         include_patterns: tuple[str, ...],
         include_stubs: bool,
+        include_markdown: bool,
 ) -> bool:
     return (
             path.suffix.casefold() == ".py"
             or (include_stubs and path.suffix.casefold() == ".pyi")
-            or _matches_pattern(path, root, include_patterns)
+            or (include_markdown and path.suffix.casefold() in MARKDOWN_SUFFIXES)
+            or (
+                    path.suffix.casefold() not in MARKDOWN_SUFFIXES
+                    and _matches_pattern(path, root, include_patterns)
+            )
     )
 ####
 
@@ -928,10 +934,11 @@ def _is_discoverable_file(
         include_patterns: tuple[str, ...],
         exclude_patterns: tuple[str, ...],
         include_stubs: bool,
+        include_markdown: bool,
 ) -> bool:
     """Return whether recursive discovery may process a supported regular file."""
     return _is_supported_source_file(
-        path, root, include_patterns, include_stubs
+        path, root, include_patterns, include_stubs, include_markdown
     ) and not _is_excluded_path(path, root, exclude_patterns)
 ####
 
@@ -943,6 +950,7 @@ def _walk_python_files(
         exclude_patterns: tuple[str, ...],
         use_default_excludes: bool,
         include_stubs: bool,
+        include_markdown: bool,
 ) -> set[Path]:
     files: set[Path] = set()
 
@@ -975,6 +983,7 @@ def _walk_python_files(
                     include_patterns,
                     exclude_patterns,
                     include_stubs,
+                    include_markdown,
             ):
                 files.add(candidate)
             ####
@@ -1028,8 +1037,9 @@ def discover_python_files(
         exclude_patterns: Iterable[str] = (),
         use_default_excludes: bool = True,
         include_stubs: bool = False,
+        include_markdown: bool = False,
 ) -> tuple[list[Path], list[str]]:
-    """Resolve inputs into Python files, optionally including ``.pyi`` stubs."""
+    """Resolve source files, optionally including stubs and Markdown documents."""
     files: dict[str, Path] = {}
     errors: list[str] = []
     includes = tuple(include_patterns)
@@ -1042,6 +1052,7 @@ def discover_python_files(
                         path.parent,
                         includes,
                         include_stubs,
+                        include_markdown,
                 ):
                     errors.append(f"{path}: expected a supported source file or directory")
                 else:
@@ -1066,6 +1077,7 @@ def discover_python_files(
                         patterns,
                         use_default_excludes,
                         include_stubs,
+                        include_markdown,
                 ):
                     _remember_file(files, discovered)
                 ####
@@ -1087,14 +1099,16 @@ def python_files(
         exclude_patterns: Iterable[str] = (),
         use_default_excludes: bool = True,
         include_stubs: bool = False,
+        include_markdown: bool = False,
 ) -> list[Path]:
-    """Backward-compatible file discovery without returning diagnostics."""
+    """Discover source files without returning traversal diagnostics."""
     files, _ = discover_python_files(
         paths,
         include_patterns=include_patterns,
         exclude_patterns=exclude_patterns,
         use_default_excludes=use_default_excludes,
         include_stubs=include_stubs,
+        include_markdown=include_markdown,
     )
     return files
 ####
