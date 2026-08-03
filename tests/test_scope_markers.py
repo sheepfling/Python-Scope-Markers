@@ -1313,6 +1313,39 @@ def test_ignore_next_skips_one_boundary_but_not_nested_scopes() -> None:
 ####
 
 
+def test_ignore_next_block_skips_a_boundary_and_all_nested_scopes() -> None:
+    source = (
+        "# scope-markers: ignore-next-block\n"
+        "@legacy\n"
+        "class LegacyContainer:\n"
+        "    def old_method(self) -> None:\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    def another_method(self) -> None:\n"
+        "        pass\n"
+        "def current() -> None:\n"
+        "    pass\n"
+    )
+
+    formatted = scope_markers.format_source(source)
+
+    assert formatted == (
+        "# scope-markers: ignore-next-block\n"
+        "@legacy\n"
+        "class LegacyContainer:\n"
+        "    def old_method(self) -> None:\n"
+        "        if ready:\n"
+        "            pass\n"
+        "    def another_method(self) -> None:\n"
+        "        pass\n"
+        "def current() -> None:\n"
+        "    pass\n"
+        "####\n"
+    )
+    assert scope_markers.format_source(formatted) == formatted
+####
+
+
 @pytest.mark.parametrize("marker", ("##", "###", "#####"))
 @pytest.mark.parametrize("newline", ("\n", "\r\n", "\r"))
 def test_local_hash_marker_style_is_detected_and_preserved(

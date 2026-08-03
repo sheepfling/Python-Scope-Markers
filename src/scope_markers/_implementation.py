@@ -83,6 +83,7 @@ COMPOUND_STATEMENTS: Final = (
 class _BoundaryCandidate:
     """A policy-independent analyzed marker insertion candidate."""
 
+    owner: ast.AST
     kind: BoundaryKind
     boundary: ScopeBoundary
     span_lines: int
@@ -113,15 +114,18 @@ def _has_file_scope_opt_out(lines: Sequence[str], first_content_row: int | None)
 ####
 
 
-def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]]:
-    """Return the file opt-out and standalone ``ignore-next`` comment rows."""
+def _scope_marker_directives(
+        lines: Sequence[str],
+) -> tuple[bool, frozenset[int], frozenset[int]]:
+    """Return file opt-out, one-boundary, and recursive directive rows."""
     first_content_row = _first_content_row(lines)
     # A file-level opt-out must bypass tokenization: the opted-out source may
     # intentionally be incomplete or otherwise invalid Python.
     if _has_file_scope_opt_out(lines, first_content_row):
-        return True, frozenset()
+        return True, frozenset(), frozenset()
     ####
     ignore_next_rows: set[int] = set()
+    ignore_next_block_rows: set[int] = set()
     off_rows: set[int] = set()
     for token in _token_stream("".join(lines)):
         if token.type != tokenize.COMMENT:
@@ -140,9 +144,15 @@ def _scope_marker_directives(lines: Sequence[str]) -> tuple[bool, frozenset[int]
             off_rows.add(row)
         elif directive == "# scope-markers: ignore-next":
             ignore_next_rows.add(row)
+        elif directive == "# scope-markers: ignore-next-block":
+            ignore_next_block_rows.add(row)
         ####
     ####
-    return first_content_row in off_rows, frozenset(ignore_next_rows)
+    return (
+        first_content_row in off_rows,
+        frozenset(ignore_next_rows),
+        frozenset(ignore_next_block_rows),
+    )
 ####
 
 
@@ -584,7 +594,7 @@ def _scope_boundaries(
     boundaries: list[ScopeBoundary] = []
     seen: set[tuple[int, str]] = set()
     candidates = _boundary_candidates(tree, lines)
-    ignored = _ignored_candidate_identities(candidates, lines, policy)
+    ignored = _ignored_candidate_identities(candidates, lines, policy, _parents(tree))
     for candidate in candidates:
         identity = (candidate.boundary.index, candidate.boundary.indentation)
         if identity in ignored or not _candidate_decision(candidate, policy).allowed:
@@ -603,9 +613,10 @@ def _ignored_candidate_identities(
         candidates: Sequence[_BoundaryCandidate],
         lines: Sequence[str],
         policy: MarkerPolicy,
+        parents: Mapping[int, ast.AST],
 ) -> set[tuple[int, str]]:
-    _, ignore_next_rows = _scope_marker_directives(lines)
-    if not ignore_next_rows:
+    _, ignore_next_rows, ignore_next_block_rows = _scope_marker_directives(lines)
+    if not ignore_next_rows and not ignore_next_block_rows:
         return set()
     ####
     selected = sorted(
@@ -632,6 +643,29 @@ def _ignored_candidate_identities(
         )
         if target is not None:
             ignored.add((target.boundary.index, target.boundary.indentation))
+        ####
+    ####
+    for row in sorted(ignore_next_block_rows):
+        target = next(
+            (
+                candidate
+                for candidate in selected
+                if candidate.boundary.line_number > row
+            ),
+            None,
+        )
+        if target is None:
+            continue
+        ####
+        for candidate in selected:
+            owner: ast.AST | None = candidate.owner
+            while owner is not None:
+                if id(owner) == id(target.owner):
+                    ignored.add((candidate.boundary.index, candidate.boundary.indentation))
+                    break
+                ####
+                owner = parents.get(id(owner))
+            ####
         ####
     ####
     return ignored
@@ -1049,7 +1083,9 @@ def explain_source(
     explanations: list[BoundaryExplanation] = []
     selected: dict[tuple[int, str], BoundaryKind] = {}
     candidates = _boundary_candidates(tree, lines)
-    ignored = _ignored_candidate_identities(candidates, lines, effective_policy)
+    ignored = _ignored_candidate_identities(
+        candidates, lines, effective_policy, _parents(tree)
+    )
     for candidate in candidates:
         decision = _candidate_decision(candidate, effective_policy)
         identity = (candidate.boundary.index, candidate.boundary.indentation)
@@ -1346,6 +1382,7 @@ def _compound_candidate(
     end_line = node.end_lineno if node.end_lineno is not None else node.lineno
     depth = _candidate_depth(node, parents)
     return _BoundaryCandidate(
+        owner=node,
         kind=_compound_kind(node),
         boundary=boundary,
         span_lines=max(1, end_line - node.lineno + 1),
@@ -1379,6 +1416,7 @@ def _case_candidate(
         frozenset[str](("final-case",)) if is_final_case else frozenset[str]()
     )
     return _BoundaryCandidate(
+        owner=case,
         kind=BoundaryKind.CLAUSE_MATCH_CASE,
         boundary=boundary,
         span_lines=max(1, end_line - boundary.line_number + 1),
@@ -1423,6 +1461,7 @@ def _clause_header_line(
 
 def _clause_candidate(
         kind: BoundaryKind,
+        owner: ast.AST,
         suite: Sequence[ast.stmt],
         lines: Sequence[str],
         header_line: int,
@@ -1433,6 +1472,7 @@ def _clause_candidate(
     boundary = _clause_boundary(suite, lines, header_line)
     end_line = suite[-1].end_lineno or suite[-1].lineno
     return _BoundaryCandidate(
+        owner=owner,
         kind=kind,
         boundary=boundary,
         span_lines=max(1, end_line - header_line + 1),
@@ -1458,6 +1498,7 @@ def _if_clause_candidates(
     candidates = [
         _clause_candidate(
             BoundaryKind.CLAUSE_IF_BODY,
+            node,
             node.body,
             lines,
             node.lineno,
@@ -1472,6 +1513,7 @@ def _if_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_IF_ELIF,
+                node,
                 current.body,
                 lines,
                 current.lineno,
@@ -1485,6 +1527,7 @@ def _if_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_IF_ELSE,
+                node,
                 current.orelse,
                 lines,
                 _clause_header_line("else", current.orelse, node, lines, headers),
@@ -1515,6 +1558,7 @@ def _loop_clause_candidates(
     candidates = [
         _clause_candidate(
             body_kind,
+            node,
             node.body,
             lines,
             node.lineno,
@@ -1527,6 +1571,7 @@ def _loop_clause_candidates(
         candidates.append(
             _clause_candidate(
                 else_kind,
+                node,
                 node.orelse,
                 lines,
                 _clause_header_line("else", node.orelse, node, lines, headers),
@@ -1552,6 +1597,7 @@ def _try_clause_candidates(
     candidates = [
         _clause_candidate(
             BoundaryKind.CLAUSE_TRY_BODY,
+            node,
             node.body,
             lines,
             node.lineno,
@@ -1564,6 +1610,7 @@ def _try_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_TRY_EXCEPT,
+                node,
                 handler.body,
                 lines,
                 _clause_header_line("except", handler.body, node, lines, headers),
@@ -1577,6 +1624,7 @@ def _try_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_TRY_ELSE,
+                node,
                 node.orelse,
                 lines,
                 _clause_header_line("else", node.orelse, node, lines, headers),
@@ -1590,6 +1638,7 @@ def _try_clause_candidates(
         candidates.append(
             _clause_candidate(
                 BoundaryKind.CLAUSE_TRY_FINALLY,
+                node,
                 node.finalbody,
                 lines,
                 _clause_header_line("finally", node.finalbody, node, lines, headers),

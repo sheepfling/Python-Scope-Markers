@@ -487,6 +487,19 @@ class GeneratedContainer:
 
 This suppresses the class boundary but retains the function boundary.
 
+For a legacy class or function whose entire nested region should remain untouched, use
+`ignore-next-block` instead:
+
+```python
+# scope-markers: ignore-next-block
+class LegacyContainer:
+    def old_method(self) -> None:
+        pass
+```
+
+This suppresses the selected boundary and every nested boundary beneath it. The ordinary
+`ignore-next` directive remains the one-boundary form.
+
 There is currently no range-based `off` / `on` directive. Use a per-file policy for a
 generated or vendor tree.
 
