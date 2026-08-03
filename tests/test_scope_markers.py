@@ -15,7 +15,7 @@ from typing import cast
 import pytest
 
 import scope_markers as package
-from scope_markers import api, cli
+from scope_markers import _paths, api, cli
 from scripts import check_black, check_diff, check_rumdl, ci
 
 # Literal ``####`` values intentionally verify the formatter's defining output.
@@ -2904,6 +2904,13 @@ def test_cli_verbose_reports_status_without_polluting_diff(
 
     assert cli.main(["--fix", "--verbose", str(path)]) == 0
     assert f"fixed: {path}" in capsys.readouterr().out
+####
+
+
+def test_display_path_escapes_output_control_characters() -> None:
+    path = Path("line\nbreak" + chr(9) + "\u202ename.py")
+
+    assert _paths.display_path(path) == r"line\nbreak\t\u202ename.py"
 ####
 
 

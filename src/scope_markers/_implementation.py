@@ -20,6 +20,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Final, cast
 
+from ._paths import display_path
 from ._policy import BoundaryKind, MarkerPolicy, PolicyDecision, PolicyError, classic_policy
 
 try:
@@ -1736,7 +1737,7 @@ def _walk_python_files(
     files: set[Path] = set()
 
     def on_error(error: OSError) -> None:
-        errors.append(f"{root}: {error}")
+        errors.append(f"{display_path(root)}: {error}")
     ####
 
 
@@ -1832,7 +1833,9 @@ def discover_python_files(
                         include_stubs,
                         include_markdown,
                 ):
-                    errors.append(f"{path}: expected a supported source file or directory")
+                    errors.append(
+                        f"{display_path(path)}: expected a supported source file or directory"
+                    )
                 else:
                     _remember_file(files, path)
                 ####
@@ -1861,9 +1864,9 @@ def discover_python_files(
                 ####
                 continue
             ####
-            errors.append(f"{path}: path does not exist")
+            errors.append(f"{display_path(path)}: path does not exist")
         except OSError as error:
-            errors.append(f"{path}: {error}")
+            errors.append(f"{display_path(path)}: {error}")
         ####
     ####
     return sorted(files.values()), errors
@@ -1971,7 +1974,10 @@ def _write_atomic(path: Path, data: bytes) -> None:
 
 def _error_message(path: Path, error: BaseException) -> str:
     if isinstance(error, SyntaxError):
-        return f"{path}:{error.lineno or 0}:{error.offset or 0}: {error.msg}"
+        return (
+            f"{display_path(path)}:{error.lineno or 0}:{error.offset or 0}: "
+            f"{error.msg}"
+        )
     ####
     if isinstance(error, tokenize.TokenError) and len(error.args) >= 2:
         message = error.args[0]
@@ -1981,12 +1987,12 @@ def _error_message(path: Path, error: BaseException) -> str:
             if len(location_values) == 2:
                 line, column = location_values
                 if isinstance(line, int) and isinstance(column, int):
-                    return f"{path}:{line}:{column}: {message}"
+                    return f"{display_path(path)}:{line}:{column}: {message}"
                 ####
             ####
         ####
     ####
-    return f"{path}: {error}"
+    return f"{display_path(path)}: {error}"
 ####
 
 

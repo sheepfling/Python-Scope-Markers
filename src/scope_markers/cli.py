@@ -15,6 +15,7 @@ from ._implementation import (
     write_atomic,
 )
 from ._markdown import inspect_markdown_file
+from ._paths import display_path
 from ._policy import (
     MarkerPolicy,
     PolicyError,
@@ -385,12 +386,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     policy=marker_policy,
             )
             if not explanations:
-                print(f"{args.explain}: no boundary candidates")
+                print(f"{display_path(args.explain)}: no boundary candidates")
             ####
             for explanation in explanations:
                 action = "mark" if explanation.will_mark else "skip"
                 print(
-                    f"{args.explain}:{explanation.line_number}: {action} "
+                    f"{display_path(args.explain)}:{explanation.line_number}: {action} "
                     f"{explanation.kind}: {explanation.reason}"
                 )
             ####
@@ -461,7 +462,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             ####
             if not inspection.changed:
                 if verbose:
-                    print(f"clean: {path}", file=sys.stderr if show_diff else sys.stdout)
+                    print(
+                        f"clean: {display_path(path)}",
+                        file=sys.stderr if show_diff else sys.stdout,
+                    )
                 ####
                 continue
             ####
@@ -470,17 +474,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 write_diff(render_diff(inspection), inspection.encoding)
                 if verbose:
                     message = "markers to strip" if strip else "needs markers"
-                    print(f"{message}: {path}", file=sys.stderr)
+                    print(f"{message}: {display_path(path)}", file=sys.stderr)
                 ####
             elif fix:
                 write_atomic(path, inspection.formatted.encode(inspection.encoding))
                 if not quiet:
                     action = "stripped" if strip else "fixed"
-                    print(f"{action}: {path}")
+                    print(f"{action}: {display_path(path)}")
                 ####
             elif verbose or not quiet:
                 message = "markers to strip" if strip else "needs markers"
-                print(f"{message}: {path}")
+                print(f"{message}: {display_path(path)}")
             ####
             if fail_fast:
                 break

@@ -11,6 +11,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Final, TypeVar, cast
 
+from ._paths import display_path
+
 _Setting = TypeVar("_Setting")
 
 
@@ -478,15 +480,15 @@ def _load_configuration(config: Path | None) -> _PolicyConfiguration:
             document: object = tomllib.load(stream)
         ####
     except (OSError, tomllib.TOMLDecodeError) as error:
-        raise PolicyError(f"{config}: {error}") from error
+        raise PolicyError(f"{display_path(config)}: {error}") from error
     ####
     if config.name == "pyproject.toml":
-        project = _table(document, f"{config} root")
+        project = _table(document, f"{display_path(config)} root")
         tool = project.get("tool")
         if tool is None:
             return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
         ####
-        settings = _table(tool, f"{config} tool table").get("scope-markers")
+        settings = _table(tool, f"{display_path(config)} tool table").get("scope-markers")
     else:
         settings = document
     ####
@@ -494,14 +496,14 @@ def _load_configuration(config: Path | None) -> _PolicyConfiguration:
         return _PolicyConfiguration(classic_policy(), config.resolve().parent, ())
     ####
     try:
-        table = _table(settings, f"{config} scope-markers settings")
+        table = _table(settings, f"{display_path(config)} scope-markers settings")
         return _PolicyConfiguration(
             policy_from_mapping(table),
             config.resolve().parent,
             _per_file_overrides(table),
         )
     except PolicyError as error:
-        raise PolicyError(f"{config}: {error}") from error
+        raise PolicyError(f"{display_path(config)}: {error}") from error
     ####
 ####
 
@@ -628,11 +630,13 @@ def _has_scope_markers_table(path: Path) -> bool:
             document: object = tomllib.load(stream)
         ####
     except (OSError, tomllib.TOMLDecodeError) as error:
-        raise PolicyError(f"{path}: {error}") from error
+        raise PolicyError(f"{display_path(path)}: {error}") from error
     ####
-    project = _table(document, f"{path} root")
+    project = _table(document, f"{display_path(path)} root")
     tool = project.get("tool")
-    return tool is not None and "scope-markers" in _table(tool, f"{path} tool table")
+    return tool is not None and "scope-markers" in _table(
+        tool, f"{display_path(path)} tool table"
+    )
 ####
 
 
