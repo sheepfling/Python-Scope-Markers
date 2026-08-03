@@ -25,7 +25,9 @@ Before:
 def absolute(value: int) -> int:
     if value < 0:
         return -value
+    ####
     return value
+####
 ```
 
 After `scope-markers --fix`:
@@ -92,6 +94,9 @@ class Worker:
     def run(self, ready: bool) -> None:
         if ready:
             work()
+        ####
+    ####
+####
 ```
 
 becomes:
@@ -201,6 +206,7 @@ if ready:
         first
         + second
     )
+####
 
 # After --indent-width 2
 if ready:
@@ -239,6 +245,7 @@ def run() -> None:
 # After
 def run() -> None:
     work()
+####
 ```
 
 Marker-like text inside strings or ordinary comments is preserved.
